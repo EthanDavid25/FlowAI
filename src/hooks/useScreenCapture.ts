@@ -8,9 +8,6 @@
  *   loading  — capture in progress
  *   success  — capture succeeded, image available
  *   error    — capture failed, error message available
- *
- * Foundation 3 note: after a successful capture, the hook will also
- * trigger AI analysis. For now it just stores the image.
  */
 
 import { useState, useCallback } from 'react'
@@ -43,12 +40,32 @@ export interface UseScreenCaptureReturn {
   captureState: CaptureState
   /** Trigger a new screen capture. Returns CaptureResult or null on error / already loading. */
   triggerCapture: () => Promise<CaptureResult | null>
+  /** Set capture state directly from an external CaptureResponse (e.g. keyboard shortcut). */
+  setCaptureResult: (response: CaptureResponse) => void
   /** Reset back to idle (clear screenshot). */
   reset: () => void
 }
 
 export function useScreenCapture(): UseScreenCaptureReturn {
   const [captureState, setCaptureState] = useState<CaptureState>(INITIAL_STATE)
+
+  const setCaptureResult = useCallback((response: CaptureResponse) => {
+    if (response.ok) {
+      setCaptureState({
+        status: 'success',
+        result: response.data,
+        errorMessage: null,
+        capturedAt: response.data.timestamp,
+      })
+    } else {
+      setCaptureState({
+        status: 'error',
+        result: null,
+        errorMessage: response.error,
+        capturedAt: null,
+      })
+    }
+  }, [])
 
   const triggerCapture = useCallback(async (): Promise<CaptureResult | null> => {
     // Guard: don't start a second capture while one is in flight
@@ -86,5 +103,5 @@ export function useScreenCapture(): UseScreenCaptureReturn {
     setCaptureState(INITIAL_STATE)
   }, [])
 
-  return { captureState, triggerCapture, reset }
+  return { captureState, triggerCapture, setCaptureResult, reset }
 }

@@ -15,6 +15,20 @@ function ScanIcon() {
   )
 }
 
+/** Target / crosshair icon for cursor analysis */
+function TargetIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="9" cy="9" r="2" fill="currentColor" />
+      <line x1="9" y1="1" x2="9" y2="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="9" y1="14" x2="9" y2="17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="1" y1="9" x2="4" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="14" y1="9" x2="17" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 /** Animated spinner shown while operation is in flight */
 function Spinner() {
   return (
@@ -40,35 +54,48 @@ function Spinner() {
 }
 
 interface ActionBarProps {
-  /** Called when the user clicks "Analyze Screen" */
-  onCapture: () => void
+  /** Called when user clicks "Analyze Screen" */
+  onAnalyzeScreen: () => void
+  /** Called when user clicks "Analyze Cursor" */
+  onAnalyzeCursor: () => void
   /** True while a capture is in progress */
   isCapturing: boolean
   /** True while AI analysis is in progress */
-  isAnalyzing?: boolean
+  isAnalyzing: boolean
+  /** Active operation mode */
+  activeMode?: 'screen' | 'cursor' | null
 }
 
 /**
- * ActionBar — contains the primary "Analyze Screen" CTA.
- * Foundation 3: button triggers capture → then local AI vision analysis.
+ * ActionBar — contains FlowAI actions:
+ *   - "Analyze Cursor": intelligent cursor awareness (Foundation 4A / 4B-1 Ctrl+Shift+F)
+ *   - "Analyze Screen": full screen vision analysis (Foundation 3)
  */
 export default function ActionBar({
-  onCapture,
+  onAnalyzeScreen,
+  onAnalyzeCursor,
   isCapturing,
-  isAnalyzing = false,
+  isAnalyzing,
+  activeMode = null,
 }: ActionBarProps) {
   const isBusy = isCapturing || isAnalyzing
 
-  let hintText = 'Click Analyze Screen to capture and analyze your display.'
-  let buttonLabel = 'Analyze Screen'
+  let hintText = 'Press Ctrl + Shift + F anywhere on your screen to identify the element under your cursor.'
 
   if (isCapturing) {
-    hintText = 'Capturing your screen…'
-    buttonLabel = 'Capturing…'
-  } else if (isAnalyzing) {
-    hintText = 'Analyzing with local AI (qwen3-vl:2b)…'
-    buttonLabel = 'Analyzing…'
+    hintText = 'Capturing screen and cursor position…'
+  } else if (isAnalyzing && activeMode === 'cursor') {
+    hintText = 'Identifying UI element at cursor coordinates with local AI (qwen3-vl:2b)…'
+  } else if (isAnalyzing && activeMode === 'screen') {
+    hintText = 'Analyzing full screen with local AI (qwen3-vl:2b)…'
   }
+
+  // Determine button states
+  const isCursorBusy = (isAnalyzing && activeMode === 'cursor') || (isCapturing && activeMode === 'cursor')
+  const isScreenBusy = (isAnalyzing && activeMode === 'screen') || (isCapturing && activeMode === 'screen')
+
+  const cursorBtnLabel = isCursorBusy ? (isCapturing ? 'Capturing…' : 'Analyzing…') : 'Analyze Cursor'
+  const screenBtnLabel = isScreenBusy ? (isCapturing ? 'Capturing…' : 'Analyzing…') : 'Analyze Screen'
 
   return (
     <div className={styles.bar}>
@@ -80,15 +107,29 @@ export default function ActionBar({
       </div>
 
       <div className={styles.right}>
+        {/* Primary Action: Analyze Cursor (Foundation 4A & 4B-1) */}
         <button
-          className={styles.analyzeBtn}
-          onClick={onCapture}
+          className={styles.cursorBtn}
+          onClick={onAnalyzeCursor}
           disabled={isBusy}
           aria-disabled={isBusy}
-          title={isBusy ? 'Operation in progress…' : 'Capture and analyze the primary display'}
+          title={isBusy ? 'Operation in progress…' : 'Identify the UI element under the mouse cursor (Ctrl + Shift + F)'}
         >
-          {isBusy ? <Spinner /> : <ScanIcon />}
-          <span>{buttonLabel}</span>
+          {isCursorBusy ? <Spinner /> : <TargetIcon />}
+          <span>{cursorBtnLabel}</span>
+          {!isCursorBusy && <span className={styles.kbd}>Ctrl+Shift+F</span>}
+        </button>
+
+        {/* Secondary Action: Analyze Screen (Foundation 3) */}
+        <button
+          className={styles.analyzeBtn}
+          onClick={onAnalyzeScreen}
+          disabled={isBusy}
+          aria-disabled={isBusy}
+          title={isBusy ? 'Operation in progress…' : 'Capture and analyze the entire screen'}
+        >
+          {isScreenBusy ? <Spinner /> : <ScanIcon />}
+          <span>{screenBtnLabel}</span>
         </button>
       </div>
     </div>

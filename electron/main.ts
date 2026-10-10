@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'electron'
 import { join } from 'path'
 import { captureScreen } from './services/screenCapture'
 import { OllamaVisionProvider } from './services/ai/OllamaVisionProvider'
+import type { BoundingBox, Point } from './services/ai/VisionProvider'
 
 // ─── AI providers ─────────────────────────────────────────────────────────────
 // Instantiated once — stateless, safe to reuse across requests.
@@ -80,7 +81,178 @@ app.whenReady().then(() => {
     return ollamaProvider.analyzeImage(base64)
   })
 
+  // Foundation 4A: intelligent cursor awareness
+  // 1. Get current mouse cursor desktop coordinates
+  ipcMain.handle('cursor:getPoint', () => {
+    const point = screen.getCursorScreenPoint()
+    return { x: Math.round(point.x), y: Math.round(point.y) }
+  })
+
+  // 2. Identify UI element at / under the cursor position
+  ipcMain.handle(
+    'ai:analyzeCursor',
+    async (
+      _event,
+      params: {
+        dataUrl: string
+        cursorX: number
+        cursorY: number
+        screenWidth: number
+        screenHeight: number
+      }
+    ) => {
+      if (isCursorAnalysisInProgress) {
+        console.warn('[main] Rejected concurrent cursor analysis: already in progress')
+        return { ok: false, error: 'Cursor analysis is already in progress' }
+      }
+
+      isCursorAnalysisInProgress = true
+      try {
+        const base64 = params.dataUrl.includes(',')
+          ? params.dataUrl.split(',')[1]
+          : params.dataUrl
+
+        const primary = screen.getPrimaryDisplay()
+        const logicalWidth = primary.size.width || params.screenWidth
+        const logicalHeight = primary.size.height || params.screenHeight
+
+        // Scale cursor to image resolution if thumbnail dimensions differ from logical screen
+        const scaleX = params.screenWidth / logicalWidth
+        const scaleY = params.screenHeight / logicalHeight
+
+        const imageCursorX = Math.round(params.cursorX * (scaleX > 0 ? scaleX : 1))
+        const imageCursorY = Math.round(params.cursorY * (scaleY > 0 ? scaleY : 1))
+
+        console.log(
+          `[main] Cursor analysis: screen=(${params.screenWidth}x${params.screenHeight}), ` +
+          `logical=(${logicalWidth}x${logicalHeight}), cursor=(${params.cursorX}, ${params.cursorY}) -> image=(${imageCursorX}, ${imageCursorY})`
+        )
+
+        const result = await ollamaProvider.analyzeCursorElement(
+          base64,
+          imageCursorX,
+          imageCursorY,
+          params.screenWidth,
+          params.screenHeight
+        )
+
+        if (result.ok) {
+          let bboxScreen: BoundingBox | null = null
+          let centerScreen: Point | null = null
+
+          if (result.data.bboxImage) {
+            bboxScreen = {
+              x1: scaleX > 0 ? Math.round(result.data.bboxImage.x1 / scaleX) : result.data.bboxImage.x1,
+              y1: scaleY > 0 ? Math.round(result.data.bboxImage.y1 / scaleY) : result.data.bboxImage.y1,
+              x2: scaleX > 0 ? Math.round(result.data.bboxImage.x2 / scaleX) : result.data.bboxImage.x2,
+              y2: scaleY > 0 ? Math.round(result.data.bboxImage.y2 / scaleY) : result.data.bboxImage.y2,
+            }
+          }
+
+          if (result.data.centerImage) {
+            centerScreen = {
+              x: scaleX > 0 ? Math.round(result.data.centerImage.x / scaleX) : result.data.centerImage.x,
+              y: scaleY > 0 ? Math.round(result.data.centerImage.y / scaleY) : result.data.centerImage.y,
+            }
+          } else if (bboxScreen) {
+            centerScreen = {
+              x: Math.round((bboxScreen.x1 + bboxScreen.x2) / 2),
+              y: Math.round((bboxScreen.y1 + bboxScreen.y2) / 2),
+            }
+          }
+
+          const cursorScreen: Point = {
+            x: params.cursorX,
+            y: params.cursorY,
+          }
+
+          const finalX = centerScreen ? centerScreen.x : params.cursorX
+          const finalY = centerScreen ? centerScreen.y : params.cursorY
+
+          return {
+            ok: true,
+            data: {
+              ...result.data,
+              x: finalX,
+              y: finalY,
+              bbox: bboxScreen,
+              bboxScreen,
+              centerScreen,
+              cursorScreen,
+              cursorX: params.cursorX,
+              cursorY: params.cursorY,
+            },
+          }
+        }
+
+        return result
+      } finally {
+        isCursorAnalysisInProgress = false
+      }
+    }
+  )
+
+  // Foundation 4B-2: Structured screen understanding
+  // Captures the full screen and returns a structured list of detected UI elements.
+  ipcMain.handle(
+    'ai:analyzeScreen',
+    async (
+      _event,
+      params: {
+        dataUrl: string
+        screenWidth: number
+        screenHeight: number
+        cursorX?: number
+        cursorY?: number
+      }
+    ) => {
+      if (isScreenUnderstandingInProgress) {
+        console.warn('[main] Rejected concurrent screen understanding: already in progress')
+        return { ok: false, error: 'Screen understanding is already in progress' }
+      }
+
+      isScreenUnderstandingInProgress = true
+      try {
+        const base64 = params.dataUrl.includes(',')
+          ? params.dataUrl.split(',')[1]
+          : params.dataUrl
+
+        const primary = screen.getPrimaryDisplay()
+        const logicalWidth = primary.size.width || params.screenWidth
+        const logicalHeight = primary.size.height || params.screenHeight
+
+        // Scale cursor to image resolution if needed
+        let imageCursorX: number | undefined
+        let imageCursorY: number | undefined
+        if (params.cursorX !== undefined && params.cursorY !== undefined) {
+          const scaleX = params.screenWidth / logicalWidth
+          const scaleY = params.screenHeight / logicalHeight
+          imageCursorX = Math.round(params.cursorX * (scaleX > 0 ? scaleX : 1))
+          imageCursorY = Math.round(params.cursorY * (scaleY > 0 ? scaleY : 1))
+        }
+
+        console.log(
+          `[main] Screen understanding: image=${params.screenWidth}x${params.screenHeight}, ` +
+          `cursor=${imageCursorX !== undefined ? `(${imageCursorX}, ${imageCursorY})` : 'none'}`
+        )
+
+        return await ollamaProvider.analyzeScreen(
+          base64,
+          params.screenWidth,
+          params.screenHeight,
+          imageCursorX,
+          imageCursorY
+        )
+      } finally {
+        isScreenUnderstandingInProgress = false
+      }
+    }
+  )
+
   createWindow()
+
+  // Foundation 4B-1: Global keyboard trigger for cursor analysis (Ctrl + Shift + F)
+  registerGlobalShortcuts()
 
   app.on('activate', () => {
     // macOS: re-create window when dock icon is clicked and no windows open
@@ -88,6 +260,77 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+})
+
+let isShortcutBusy = false
+let isCursorAnalysisInProgress = false
+let isScreenUnderstandingInProgress = false
+
+function registerGlobalShortcuts(): void {
+  const SHORTCUT = 'CommandOrControl+Shift+F'
+
+  // Unregister first to safely handle dev-mode hot reloads where
+  // this function might be called again without a full app restart.
+  if (globalShortcut.isRegistered(SHORTCUT)) {
+    globalShortcut.unregister(SHORTCUT)
+  }
+
+  const registered = globalShortcut.register(SHORTCUT, async () => {
+    if (isShortcutBusy || isCursorAnalysisInProgress) {
+      console.log('[main] Shortcut ignored: previous analysis still in progress')
+      return
+    }
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+
+    isShortcutBusy = true
+    console.log('[main] Global shortcut Ctrl+Shift+F triggered')
+
+    try {
+      // 1. Capture cursor position immediately — do NOT move cursor,
+      //    do NOT bring FlowAI to the foreground before capture.
+      const point = screen.getCursorScreenPoint()
+      const cursorPoint = { x: Math.round(point.x), y: Math.round(point.y) }
+      console.log('[main] Shortcut captured cursor coordinates:', cursorPoint)
+
+      // 2. Capture primary screen while the target app is still on screen.
+      const captureResponse = await captureScreen()
+
+      // 3. Now bring FlowAI into view so the user can see the result.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore()
+        }
+        mainWindow.show()
+
+        // 4. Send captured data to the renderer to run Ollama analysis.
+        mainWindow.webContents.send('cursor:shortcutTriggered', {
+          capture: captureResponse,
+          cursor: cursorPoint,
+        })
+      }
+    } catch (err) {
+      console.error('[main] Error handling Ctrl+Shift+F shortcut:', err)
+    } finally {
+      // 500 ms cooldown prevents rapid repeated triggers from stacking.
+      setTimeout(() => {
+        isShortcutBusy = false
+      }, 500)
+    }
+  })
+
+  if (!registered) {
+    console.warn('[main] Failed to register global shortcut', SHORTCUT)
+  } else {
+    console.log('[main] Global shortcut registered:', SHORTCUT)
+  }
+}
+
+app.on('will-quit', () => {
+  // Clean up global shortcuts when app exits
+  globalShortcut.unregisterAll()
 })
 
 app.on('window-all-closed', () => {
