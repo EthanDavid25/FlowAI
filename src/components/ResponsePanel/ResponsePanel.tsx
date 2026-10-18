@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import type { AiState } from '../../hooks/useAiAnalysis'
 import styles from './ResponsePanel.module.css'
 
@@ -123,6 +124,10 @@ function elementTypeLabel(type: ScreenElementType): string {
     radio: 'Radio',
     dropdown: 'Dropdown',
     scrollbar: 'Scrollbar',
+    terminal: 'Terminal',
+    command_line: 'Command',
+    code_block: 'Code',
+    output_area: 'Output',
     other: 'Element',
   }
   return MAP[type] ?? type
@@ -143,6 +148,16 @@ interface ResponsePanelProps {
  */
 export default function ResponsePanel({ aiState, isCapturing = false }: ResponsePanelProps) {
   const { status, mode, screenResult, cursorResult, screenUnderstandingResult, errorMessage } = aiState
+
+  const [shortcutText, setShortcutText] = useState('Ctrl + Shift + F')
+
+  useEffect(() => {
+    window.flowAI?.getCursorShortcutInfo?.().then((info) => {
+      if (info?.displayShortcut) {
+        setShortcutText(info.displayShortcut.replace(/\+/g, ' + '))
+      }
+    }).catch(() => {})
+  }, [])
 
   // Determine status chip text and styles
   let chipText = 'Idle'
@@ -487,7 +502,7 @@ export default function ResponsePanel({ aiState, isCapturing = false }: Response
             </div>
             <p className={styles.emptyTitle}>Ready to analyze</p>
             <p className={styles.emptyHint}>
-              Press <strong>Ctrl + Shift + F</strong> anywhere on your screen to identify the element under your mouse, or click{' '}
+              Press <strong>{shortcutText}</strong> anywhere on your screen to identify the element under your mouse, or click{' '}
               <strong>Analyze Screen</strong> to understand all visible UI elements.
             </p>
           </div>

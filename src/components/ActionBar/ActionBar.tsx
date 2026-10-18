@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import styles from './ActionBar.module.css'
 
 /** Scan / camera frame icon */
@@ -80,7 +81,21 @@ export default function ActionBar({
 }: ActionBarProps) {
   const isBusy = isCapturing || isAnalyzing
 
-  let hintText = 'Press Ctrl + Shift + F anywhere on your screen to identify the element under your cursor.'
+  const [shortcutText, setShortcutText] = useState('Ctrl+Shift+F')
+  const [shortcutRegistered, setShortcutRegistered] = useState(true)
+
+  useEffect(() => {
+    window.flowAI?.getCursorShortcutInfo?.().then((info) => {
+      if (info) {
+        if (info.displayShortcut) setShortcutText(info.displayShortcut)
+        setShortcutRegistered(info.registered)
+      }
+    }).catch(() => {})
+  }, [])
+
+  let hintText = shortcutRegistered
+    ? `Press ${shortcutText} anywhere on your screen to identify the element under your cursor.`
+    : 'Click Analyze Cursor below to identify the element under your cursor.'
 
   if (isCapturing) {
     hintText = 'Capturing screen and cursor position…'
@@ -113,11 +128,17 @@ export default function ActionBar({
           onClick={onAnalyzeCursor}
           disabled={isBusy}
           aria-disabled={isBusy}
-          title={isBusy ? 'Operation in progress…' : 'Identify the UI element under the mouse cursor (Ctrl + Shift + F)'}
+          title={
+            isBusy
+              ? 'Operation in progress…'
+              : shortcutRegistered
+              ? `Identify the UI element under the mouse cursor (${shortcutText})`
+              : 'Identify the UI element under the mouse cursor'
+          }
         >
           {isCursorBusy ? <Spinner /> : <TargetIcon />}
           <span>{cursorBtnLabel}</span>
-          {!isCursorBusy && <span className={styles.kbd}>Ctrl+Shift+F</span>}
+          {!isCursorBusy && <span className={styles.kbd}>{shortcutText}</span>}
         </button>
 
         {/* Secondary Action: Analyze Screen (Foundation 3) */}

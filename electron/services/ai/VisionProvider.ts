@@ -138,6 +138,10 @@ export type ScreenElementType =
   | 'radio'
   | 'dropdown'
   | 'scrollbar'
+  | 'terminal'
+  | 'command_line'
+  | 'code_block'
+  | 'output_area'
   | 'other'
 
 /**

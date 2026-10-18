@@ -1,4 +1,5 @@
 import type { CaptureState } from '../../hooks/useScreenCapture'
+import type { ScreenUnderstandingResult } from '../../types/screenUnderstanding'
 import styles from './ScreenPanel.module.css'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -69,20 +70,60 @@ function ErrorState({ message }: { message: string }) {
   )
 }
 
-function ScreenshotState({ result }: { result: CaptureResult }) {
+function ScreenshotState({
+  result,
+  screenUnderstandingResult,
+}: {
+  result: CaptureResult
+  screenUnderstandingResult: ScreenUnderstandingResult | null
+}) {
   const capturedTime = new Date(result.timestamp).toLocaleTimeString()
+
+  const elements =
+    screenUnderstandingResult?.elements.filter(
+      (element) => element.bbox !== null
+    ) ?? []
+
   return (
     <div className={styles.screenshotWrapper}>
-      <img
-        src={result.dataUrl}
-        alt="Captured screen"
-        className={styles.screenshotImg}
-        draggable={false}
-      />
-      <div className={styles.screenshotOverlay}>
-        <span className={styles.overlayTag}>
-          {result.width} × {result.height} · {capturedTime}
-        </span>
+      <div
+        className={styles.screenshotImageFrame}
+        style={{ aspectRatio: `${result.width} / ${result.height}` }}
+      >
+        <img
+          src={result.dataUrl}
+          alt="Captured screen"
+          className={styles.screenshotImg}
+          draggable={false}
+        />
+
+        {elements.map((element) => {
+          const box = element.bbox!
+          const left = (box.x1 / result.width) * 100
+          const top = (box.y1 / result.height) * 100
+          const width = ((box.x2 - box.x1) / result.width) * 100
+          const height = ((box.y2 - box.y1) / result.height) * 100
+
+          return (
+            <div
+              key={element.id}
+              className={styles.elementHighlight}
+              style={{
+                left: `${left}%`,
+                top: `${top}%`,
+                width: `${width}%`,
+                height: `${height}%`,
+              }}
+              title={`${element.label}: ${element.description}`}
+            />
+          )
+        })}
+
+        <div className={styles.screenshotOverlay}>
+          <span className={styles.overlayTag}>
+            {result.width} × {result.height} · {capturedTime}
+          </span>
+        </div>
       </div>
     </div>
   )
@@ -92,6 +133,9 @@ function ScreenshotState({ result }: { result: CaptureResult }) {
 
 interface ScreenPanelProps {
   captureState: CaptureState
+  screenUnderstandingResult: ScreenUnderstandingResult | null
+  
+
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -103,7 +147,10 @@ interface ScreenPanelProps {
  *   success → the actual screenshot
  *   error   → error message with icon
  */
-export default function ScreenPanel({ captureState }: ScreenPanelProps) {
+export default function ScreenPanel({
+  captureState,
+  screenUnderstandingResult,
+}: ScreenPanelProps) {
   const { status, result, errorMessage, capturedAt } = captureState
 
   // Badge text changes with state
@@ -136,7 +183,12 @@ export default function ScreenPanel({ captureState }: ScreenPanelProps) {
         {status === 'idle'    && <EmptyState />}
         {status === 'loading' && <LoadingState />}
         {status === 'error'   && <ErrorState message={errorMessage ?? 'Unknown error'} />}
-        {status === 'success' && result && <ScreenshotState result={result} />}
+{status === 'success' && result && (
+  <ScreenshotState
+    result={result}
+    screenUnderstandingResult={screenUnderstandingResult}
+  />
+)}
       </div>
 
       <div className={styles.panelFooter}>

@@ -113,7 +113,8 @@ type ScreenElementType =
   | 'navigation_item' | 'card' | 'list' | 'list_item' | 'table' | 'table_row'
   | 'dialog' | 'modal' | 'panel' | 'video' | 'image' | 'thumbnail' | 'text_block'
   | 'message' | 'message_bubble' | 'chat' | 'chat_row' | 'profile' | 'icon'
-  | 'checkbox' | 'radio' | 'dropdown' | 'scrollbar' | 'other'
+  | 'checkbox' | 'radio' | 'dropdown' | 'scrollbar'
+  | 'terminal' | 'command_line' | 'code_block' | 'output_area' | 'other'
 
 /** A single detected UI/content element from screen understanding */
 interface ScreenElement {
@@ -212,9 +213,13 @@ interface FlowAIBridge {
     cursorY?: number
   }) => Promise<ScreenUnderstandingResponse>
   /**
-   * Foundation 4B-1: Subscribe to global keyboard shortcut (Ctrl + Shift + F) trigger.
+   * Foundation 4B-1: Subscribe to global keyboard shortcut trigger.
    */
   onCursorShortcut: (callback: (payload: CursorShortcutPayload) => void) => () => void
+  /**
+   * Get registration status and active key combination for the cursor shortcut.
+   */
+  getCursorShortcutInfo: () => Promise<CursorShortcutInfo>
   /** Generic IPC invoke for other channels (channel-whitelisted in preload). */
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   /** Subscribe to main-process push events. Returns unsubscribe fn. */
@@ -224,6 +229,14 @@ interface FlowAIBridge {
 interface CursorShortcutPayload {
   capture: CaptureResponse
   cursor: { x: number; y: number }
+}
+
+interface CursorShortcutInfo {
+  registered: boolean
+  shortcut: string
+  displayShortcut: string
+  isFallback: boolean
+  diagnostic?: string
 }
 
 interface Window {

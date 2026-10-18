@@ -167,9 +167,13 @@ export interface FlowAIBridge {
     cursorY?: number
   }) => Promise<ScreenUnderstandingResponse>
   /**
-   * Foundation 4B-1: Subscribe to global keyboard shortcut (Ctrl + Shift + F) trigger.
+   * Foundation 4B-1: Subscribe to global keyboard shortcut trigger.
    */
   onCursorShortcut: (callback: (payload: CursorShortcutPayload) => void) => () => void
+  /**
+   * Get registration status and active key combination for the cursor shortcut.
+   */
+  getCursorShortcutInfo: () => Promise<CursorShortcutInfo>
   /**
    * Generic IPC invoke — renderer calls main-process handlers by channel name.
    */
@@ -186,6 +190,14 @@ export interface CursorShortcutPayload {
   cursor: { x: number; y: number }
 }
 
+export interface CursorShortcutInfo {
+  registered: boolean
+  shortcut: string
+  displayShortcut: string
+  isFallback: boolean
+  diagnostic?: string
+}
+
 // ─── Allowed IPC channels (whitelist) ────────────────────────────────────────
 const ALLOWED_INVOKE_CHANNELS: string[] = [
   'screen:capture',          // Foundation 2: capture primary display
@@ -193,6 +205,7 @@ const ALLOWED_INVOKE_CHANNELS: string[] = [
   'cursor:getPoint',         // Foundation 4A: get cursor position
   'ai:analyzeCursor',        // Foundation 4B-1: analyze element at cursor
   'ai:analyzeScreen',        // Foundation 4B-2: structured screen understanding
+  'cursor:getShortcutInfo',   // Global shortcut registration status & active key
 ]
 
 const ALLOWED_EVENT_CHANNELS: string[] = [
@@ -238,6 +251,9 @@ const api: FlowAIBridge = {
     ipcRenderer.on('cursor:shortcutTriggered', subscription)
     return () => ipcRenderer.removeListener('cursor:shortcutTriggered', subscription)
   },
+
+  getCursorShortcutInfo: () =>
+    ipcRenderer.invoke('cursor:getShortcutInfo') as Promise<CursorShortcutInfo>,
 
   invoke: (channel: string, ...args: unknown[]) => {
     if (!ALLOWED_INVOKE_CHANNELS.includes(channel)) {

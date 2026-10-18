@@ -139,7 +139,10 @@ export default function Dashboard() {
     <div className={styles.dashboard}>
       <Header />
       <div className={styles.content}>
-        <ScreenPanel captureState={captureState} />
+        <ScreenPanel
+  captureState={captureState}
+  screenUnderstandingResult={aiState.screenUnderstandingResult}
+/>
         <ResponsePanel aiState={aiState} isCapturing={isCapturing} />
       </div>
       <ActionBar

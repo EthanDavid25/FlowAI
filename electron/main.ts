@@ -11,6 +11,35 @@ const ollamaProvider = new OllamaVisionProvider()
 // ─── Environment detection ───────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
+// ─── Single instance lock ─────────────────────────────────────────────────────
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  console.log('[main] Another FlowAI instance is already running. Quitting duplicate instance.')
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
+export interface CursorShortcutInfo {
+  registered: boolean
+  shortcut: string
+  displayShortcut: string
+  isFallback: boolean
+  diagnostic?: string
+}
+
+let cursorShortcutInfo: CursorShortcutInfo = {
+  registered: false,
+  shortcut: '',
+  displayShortcut: 'Ctrl+Shift+F',
+  isFallback: false,
+}
+
 // ─── Window management ───────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
 
@@ -69,7 +98,31 @@ function createWindow(): void {
 app.whenReady().then(() => {
   // ── IPC handlers ──────────────────────────────────────────────────────────
   // Foundation 2: screen capture
-  ipcMain.handle('screen:capture', () => captureScreen())
+  // Hide FlowAI before capturing so the screenshot shows the application behind
+  // it rather than the FlowAI window itself. A 200 ms delay lets the window
+  // compositor remove the FlowAI frame before the screenshot is taken.
+  // try/finally guarantees the window is always restored, even on capture error.
+  //
+  // NOTE: The Ctrl+Shift+F shortcut path calls captureScreen() directly (not via
+  // this IPC handler) and is unaffected by this change.
+  ipcMain.handle('screen:capture', async () => {
+    const win = mainWindow
+    const wasVisible = win != null && !win.isDestroyed() && win.isVisible()
+
+    if (wasVisible) {
+      win!.hide()
+      // Allow the window compositor to settle before the screenshot is taken.
+      await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    }
+
+    try {
+      return await captureScreen()
+    } finally {
+      if (wasVisible && win != null && !win.isDestroyed()) {
+        win.show()
+      }
+    }
+  })
 
   // Foundation 3: vision AI analysis
   // Receives the data URL from the renderer, strips the prefix, sends base64
@@ -87,6 +140,9 @@ app.whenReady().then(() => {
     const point = screen.getCursorScreenPoint()
     return { x: Math.round(point.x), y: Math.round(point.y) }
   })
+
+  // Get active cursor shortcut registration info and status
+  ipcMain.handle('cursor:getShortcutInfo', () => cursorShortcutInfo)
 
   // 2. Identify UI element at / under the cursor position
   ipcMain.handle(
@@ -267,17 +323,21 @@ let isCursorAnalysisInProgress = false
 let isScreenUnderstandingInProgress = false
 
 function registerGlobalShortcuts(): void {
-  const SHORTCUT = 'CommandOrControl+Shift+F'
+  // Candidate shortcuts in order of preference:
+  // Primary is the intended Ctrl+Shift+F.
+  // Fallbacks are tried ONLY if the OS reports a registration failure (e.g. another app has claimed it).
+  const candidates: Array<{ shortcut: string; displayShortcut: string; isFallback: boolean }> = [
+    { shortcut: 'CommandOrControl+Shift+F', displayShortcut: 'Ctrl+Shift+F', isFallback: false },
+    { shortcut: 'Alt+Shift+F', displayShortcut: 'Alt+Shift+F', isFallback: true },
+    { shortcut: 'CommandOrControl+Alt+F', displayShortcut: 'Ctrl+Alt+F', isFallback: true },
+  ]
 
-  // Unregister first to safely handle dev-mode hot reloads where
-  // this function might be called again without a full app restart.
-  if (globalShortcut.isRegistered(SHORTCUT)) {
-    globalShortcut.unregister(SHORTCUT)
-  }
+  // Unregister existing shortcuts if any were previously registered
+  globalShortcut.unregisterAll()
 
-  const registered = globalShortcut.register(SHORTCUT, async () => {
+  const triggerAnalysis = async (displayKey: string) => {
     if (isShortcutBusy || isCursorAnalysisInProgress) {
-      console.log('[main] Shortcut ignored: previous analysis still in progress')
+      console.log(`[main] Shortcut (${displayKey}) ignored: previous analysis still in progress`)
       return
     }
 
@@ -286,7 +346,7 @@ function registerGlobalShortcuts(): void {
     }
 
     isShortcutBusy = true
-    console.log('[main] Global shortcut Ctrl+Shift+F triggered')
+    console.log(`[main] Global shortcut ${displayKey} triggered`)
 
     try {
       // 1. Capture cursor position immediately — do NOT move cursor,
@@ -312,19 +372,54 @@ function registerGlobalShortcuts(): void {
         })
       }
     } catch (err) {
-      console.error('[main] Error handling Ctrl+Shift+F shortcut:', err)
+      console.error(`[main] Error handling ${displayKey} shortcut:`, err)
     } finally {
       // 500 ms cooldown prevents rapid repeated triggers from stacking.
       setTimeout(() => {
         isShortcutBusy = false
       }, 500)
     }
-  })
+  }
 
-  if (!registered) {
-    console.warn('[main] Failed to register global shortcut', SHORTCUT)
-  } else {
-    console.log('[main] Global shortcut registered:', SHORTCUT)
+  let registeredSuccessfully = false
+
+  for (const candidate of candidates) {
+    const registered = globalShortcut.register(candidate.shortcut, () => triggerAnalysis(candidate.displayShortcut))
+    if (registered) {
+      cursorShortcutInfo = {
+        registered: true,
+        shortcut: candidate.shortcut,
+        displayShortcut: candidate.displayShortcut,
+        isFallback: candidate.isFallback,
+        diagnostic: candidate.isFallback
+          ? `Primary shortcut Ctrl+Shift+F is occupied by another application. Using fallback shortcut: ${candidate.displayShortcut}.`
+          : undefined,
+      }
+      registeredSuccessfully = true
+
+      if (candidate.isFallback) {
+        console.warn(
+          `[main] Primary shortcut Ctrl+Shift+F is occupied by another system application. ` +
+          `Successfully registered fallback shortcut: ${candidate.displayShortcut}`
+        )
+      } else {
+        console.log(`[main] Global shortcut registered successfully: ${candidate.displayShortcut}`)
+      }
+      break
+    } else {
+      console.warn(`[main] Failed to register global shortcut: ${candidate.shortcut} (occupied by another process or unavailable)`)
+    }
+  }
+
+  if (!registeredSuccessfully) {
+    cursorShortcutInfo = {
+      registered: false,
+      shortcut: '',
+      displayShortcut: 'Ctrl+Shift+F',
+      isFallback: false,
+      diagnostic: 'All global shortcuts failed to register due to system-level conflicts. Use the "Analyze Cursor" button directly.',
+    }
+    console.warn('[main] All global shortcut candidates failed to register. Cursor analysis remains available via the Analyze Cursor button in the UI.')
   }
 }
 

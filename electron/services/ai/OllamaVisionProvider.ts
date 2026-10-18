@@ -84,6 +84,8 @@ interface OllamaChatResponse {
   done: boolean
   done_reason?: string
   total_duration?: number     // nanoseconds
+  prompt_eval_duration?: number // nanoseconds
+  eval_duration?: number      // nanoseconds
   prompt_eval_count?: number
   eval_count?: number
 }
@@ -518,7 +520,8 @@ const VALID_ELEMENT_TYPES: ReadonlySet<ScreenElementType> = new Set<ScreenElemen
   'navigation_item', 'card', 'list', 'list_item', 'table', 'table_row',
   'dialog', 'modal', 'panel', 'video', 'image', 'thumbnail', 'text_block',
   'message', 'message_bubble', 'chat', 'chat_row', 'profile', 'icon',
-  'checkbox', 'radio', 'dropdown', 'scrollbar', 'other',
+  'checkbox', 'radio', 'dropdown', 'scrollbar', 'terminal',
+  'command_line', 'code_block', 'output_area', 'other',
 ])
 
 /** Interactive element types — used to set the interactive flag */
@@ -527,7 +530,7 @@ const INTERACTIVE_TYPES: ReadonlySet<ScreenElementType> = new Set<ScreenElementT
   'navigation_button', 'toolbar_button', 'search_input', 'text_input',
   'button', 'link', 'menu', 'menu_item', 'navigation_item', 'list_item',
   'table_row', 'icon', 'checkbox', 'radio', 'dropdown', 'scrollbar',
-  'chat_row', 'profile',
+  'chat_row', 'profile', 'terminal', 'command_line',
 ])
 
 /**
@@ -554,6 +557,10 @@ function normalizeElementType(raw: unknown): ScreenElementType {
   if (s.includes('navigation_item') || s.includes('nav_item')) return 'navigation_item'
   if (s.includes('menu_item')) return 'menu_item'
   if (s.includes('menu')) return 'menu'
+  if (s.includes('terminal') || s.includes('cmd') || s.includes('powershell') || s.includes('console_window') || s.includes('command_prompt')) return 'terminal'
+  if (s.includes('command_line') || s.includes('cli_command') || s.includes('prompt_line') || s.includes('command')) return 'command_line'
+  if (s.includes('code_block') || s.includes('code_editor') || s.includes('code') || s.includes('syntax')) return 'code_block'
+  if (s.includes('output_area') || s.includes('terminal_output') || s.includes('console_output') || s.includes('stdout') || s.includes('stderr') || s.includes('output')) return 'output_area'
   if (s.includes('chat_row') || s.includes('conversation_item')) return 'chat_row'
   if (s.includes('chat') || s.includes('conversation_list')) return 'chat'
   if (s.includes('message_bubble') || s.includes('msg_bubble')) return 'message_bubble'
@@ -569,6 +576,7 @@ function normalizeElementType(raw: unknown): ScreenElementType {
   if (s.includes('modal')) return 'modal'
   if (s.includes('panel')) return 'panel'
   if (s.includes('link') || s.includes('hyperlink') || s.includes('anchor')) return 'link'
+  if (s.includes('shortcut') || s.includes('bookmark') || s.includes('tile')) return 'button'
   if (s.includes('button') || s.includes('btn')) return 'button'
   if (s.includes('checkbox') || s.includes('check_box')) return 'checkbox'
   if (s.includes('radio')) return 'radio'
@@ -598,7 +606,8 @@ function normalizeElementType(raw: unknown): ScreenElementType {
 function validateScreenElementBbox(
   rawBbox: unknown,
   imageWidth: number,
-  imageHeight: number
+  imageHeight: number,
+  type?: ScreenElementType
 ): BoundingBox | null {
   const parsed = parseRawBbox(rawBbox)
   if (!parsed) return null
@@ -614,6 +623,25 @@ function validateScreenElementBbox(
   }
   // Detect Qwen-VL style [0,1000] — scale to pixels
   else if (Math.max(a, b, c, d) <= 1001 && Math.max(a, b, c, d) > 1) {
+    // Check if wide horizontal control was emitted in [ymin, xmin, ymax, xmax] format
+    const isHorizontallyWide = type === 'address_bar' || type === 'browser_tab' || type === 'search_input'
+    const standardWidth = Math.abs(c - a)
+    const standardHeight = Math.abs(d - b)
+
+    if (isHorizontallyWide && standardHeight > standardWidth * 2) {
+      // Swapped format: a=ymin, b=xmin, c=ymax, d=xmax
+      const ymin = (Math.min(a, c) / 1000) * imageHeight
+      const ymax = (Math.max(a, c) / 1000) * imageHeight
+      const xmin = (Math.min(b, d) / 1000) * imageWidth
+      const xmax = (Math.max(b, d) / 1000) * imageWidth
+      return {
+        x1: Math.round(Math.max(0, Math.min(imageWidth, xmin))),
+        y1: Math.round(Math.max(0, Math.min(imageHeight, ymin))),
+        x2: Math.round(Math.max(0, Math.min(imageWidth, xmax))),
+        y2: Math.round(Math.max(0, Math.min(imageHeight, ymax))),
+      }
+    }
+
     a = (a / 1000) * imageWidth
     b = (b / 1000) * imageHeight
     c = (c / 1000) * imageWidth
@@ -626,11 +654,6 @@ function validateScreenElementBbox(
   let y1 = Math.min(b, d)
   let x2 = Math.max(a, c)
   let y2 = Math.max(b, d)
-
-  // Try inverted Qwen-VL format [y1, x1, y2, x2] if standard gives nonsense
-  // (only attempt swap if values are clearly in image range)
-  // We'll detect inverted format by checking if the bbox is more reasonable the other way.
-  // Since we already took min/max, this is handled.
 
   // Clamp to image bounds (minor rounding tolerance only: 2px)
   x1 = Math.max(0, x1)
@@ -670,6 +693,25 @@ function cursorInsideBbox(cursorX: number, cursorY: number, bbox: BoundingBox): 
  */
 function bboxArea(bbox: BoundingBox): number {
   return (bbox.x2 - bbox.x1) * (bbox.y2 - bbox.y1)
+}
+
+/**
+ * Intersection over Union (IoU) of two bounding boxes.
+ */
+function bboxIoU(b1: BoundingBox, b2: BoundingBox): number {
+  const interX1 = Math.max(b1.x1, b2.x1)
+  const interY1 = Math.max(b1.y1, b2.y1)
+  const interX2 = Math.min(b1.x2, b2.x2)
+  const interY2 = Math.min(b1.y2, b2.y2)
+
+  if (interX2 <= interX1 || interY2 <= interY1) return 0
+
+  const interArea = (interX2 - interX1) * (interY2 - interY1)
+  const area1 = (b1.x2 - b1.x1) * (b1.y2 - b1.y1)
+  const area2 = (b2.x2 - b2.x1) * (b2.y2 - b2.y1)
+  const unionArea = area1 + area2 - interArea
+
+  return unionArea > 0 ? interArea / unionArea : 0
 }
 
 /**
@@ -829,7 +871,7 @@ function parseScreenUnderstandingResult(
     const description = typeof el.description === 'string' ? el.description.trim() : ''
 
     // Validate bbox — if invalid, skip this element (never fabricate)
-    const bbox = validateScreenElementBbox(el.bbox ?? el.bounding_box ?? el.bounds ?? el.box, imageWidth, imageHeight)
+    const bbox = validateScreenElementBbox(el.bbox ?? el.bounding_box ?? el.bounds ?? el.box, imageWidth, imageHeight, type)
     if (!bbox) {
       console.log(`[OllamaVisionProvider] Screen element #${elementIndex} "${label}" (${type}) has invalid bbox — skipped`)
       elementIndex++
@@ -883,11 +925,25 @@ function parseScreenUnderstandingResult(
     elementIndex++
   }
 
+  // Deduplicate overlapping elements (IoU > 0.85) keeping the higher-confidence detection
+  const finalElements: ScreenElement[] = []
+  for (const el of validatedElements) {
+    if (!el.bbox) continue
+    const dupIndex = finalElements.findIndex(
+      (existing) => existing.bbox && bboxIoU(existing.bbox, el.bbox!) > 0.85
+    )
+    if (dupIndex === -1) {
+      finalElements.push(el)
+    } else if (el.confidence > finalElements[dupIndex].confidence) {
+      finalElements[dupIndex] = el
+    }
+  }
+
   // Determine cursor target: smallest bbox element that contains cursor
   let cursorTarget: ScreenElement | null = null
   if (cursorX !== undefined && cursorY !== undefined) {
     let smallestArea = Infinity
-    for (const el of validatedElements) {
+    for (const el of finalElements) {
       if (el.containsCursor && el.bbox) {
         const area = bboxArea(el.bbox)
         if (area < smallestArea) {
@@ -900,7 +956,7 @@ function parseScreenUnderstandingResult(
 
   return {
     screen: { application: screenApp, description: screenDesc },
-    elements: validatedElements,
+    elements: finalElements,
     cursorTarget,
     model,
     durationMs,
@@ -921,25 +977,41 @@ function parseScreenUnderstandingResult(
  *  - ONE request only — no per-element follow-up requests.
  */
 function buildScreenUnderstandingPrompt(): string {
-  return `You are a computer screen understanding system.
-Analyze this screenshot. Identify the visible application and its meaningful UI elements.
+  return `You are a precision computer vision system for desktop screen and UI understanding.
+Perform a systematic scan of this entire computer screenshot, understanding the active applications, visible content, and key controls.
+
+SCAN REGIONS & APPLICATION TYPES TO COVER:
+1. Browser Interfaces & Web Content:
+   - Window title bar, controls, and browser tabs (type "browser_tab", state "active" or "inactive", label with tab title).
+   - Tab controls ("new_tab_button", "browser_tab_close"), navigation buttons ("navigation_button"), address bar ("address_bar").
+   - Bookmarks, search fields ("search_input"), text inputs ("text_input"), action buttons ("button"), navigation links ("link").
+   - Website shortcuts/tiles or content cards: identify prominent shortcuts or cards individually ("button" or "icon").
+2. Terminals, Command Prompts & Consoles (CMD, PowerShell, Bash):
+   - Terminal window or container ("terminal").
+   - Active command line prompt and any typed/executed commands ("command_line", label with the command text if visible).
+   - Command output, compilation logs, execution traces, or status text ("output_area").
+   - Distinct error messages, warnings, or failure notices ("output_area" or "text_block", label with error summary).
+3. Code Editors & Development Tools:
+   - Editor panes and code blocks ("code_block").
+   - File trees and sidebars ("sidebar", "navigation_item"), editor tabs ("browser_tab"), status bars ("panel").
+4. Other Desktop Applications & Dialogs:
+   - Dialogs ("dialog"), message bubbles ("message_bubble"), panels ("panel"), buttons ("button"), and visible content.
 
 RULES:
-1. Identify the application (e.g. "Google Chrome", "WhatsApp", "YouTube", "Unknown").
-2. Detect meaningful visible UI elements: tabs, address bars, buttons, inputs, links, sidebars, cards, videos, thumbnails, messages, menus, icons, and content areas.
-3. For each element: provide type, label (readable text if visible, else a generic description), description, bounding box, and confidence.
-4. Use normalized coordinates 0–1000 for bounding boxes: [x1, y1, x2, y2] where (0,0) is top-left and (1000,1000) is bottom-right.
-5. Element center must never be hardcoded — return bbox only, center will be derived geometrically.
-6. Do NOT return cursor, crosshair, or mouse pointer as an element.
-7. Do NOT invent text that is not visible. Use "unknown" or a generic label when unreadable.
-8. Do NOT hallucinate elements outside the screenshot.
-9. Prefer 10–30 meaningful elements. Skip tiny decorative details (shadows, dividers, gradients).
-10. For browser tabs: use type "browser_tab", set state "active" or "inactive", set label to tab title if readable or "Browser tab" if not.
-11. Return ONLY valid JSON. No explanation outside the JSON.
+1. SCREEN SUMMARY: Provide an accurate, factual summary in screen.description of what the user is doing and the observable state of the window (e.g. running commands, viewing a website, encountering an error, editing a file). Distinguish clearly between visible facts and uncertainty. Never invent commands, actions, or results not visible in the screenshot.
+2. ELEMENT LIMIT: Prioritize the 10 to 12 most important or prominent elements on screen to fit within output limits.
+3. BOUNDING BOXES: Normalized [x1, y1, x2, y2] from 0 to 1000 where (0,0) is top-left and (1000,1000) is bottom-right.
+   - x1 (left), y1 (top), x2 (right), y2 (bottom) with x1 < x2 and y1 < y2.
+   - Keep bounding boxes tight around individual elements or distinct functional sections.
+4. LABELS: Use readable visible text for labels. For CLI commands, use the visible command text (e.g. "git status", "npm run build"). For errors, include the error label (e.g. "Error: Cannot find module"). For recognizable apps/icons, use the recognizable name.
+5. DESCRIPTIONS: Keep each element's "description" concise (under 15 words), capturing its visible content, role, or execution state (e.g. "Completed with exit code 0", "Active prompt waiting for user input", "Error stack trace").
+6. NO FABRICATION & NO DUPLICATES: Only detect genuinely visible elements. Do not duplicate elements for the same visual control. Do not return mouse cursor or crosshair.
+7. VALID JSON ONLY: Return strictly valid JSON following the schema below with no text outside the JSON.
 
 ELEMENT TYPES (use exactly one):
 application_window, browser_tab, browser_tab_close, new_tab_button,
 address_bar, navigation_button, toolbar_button, search_input, text_input,
+terminal, command_line, code_block, output_area,
 button, link, menu, menu_item, sidebar, navigation_item, card, list, list_item,
 table, table_row, dialog, modal, panel, video, image, thumbnail, text_block,
 message, message_bubble, chat, chat_row, profile, icon, checkbox, radio,
@@ -949,14 +1021,14 @@ Return ONLY this JSON structure:
 {
   "screen": {
     "application": "<app name or Unknown>",
-    "description": "<brief overall description>"
+    "description": "<factual summary of visible screen state and context>"
   },
   "elements": [
     {
       "id": "element-1",
       "type": "<element_type>",
-      "label": "<visible label or generic>",
-      "description": "<brief description>",
+      "label": "<visible label or command>",
+      "description": "<brief description under 15 words>",
       "bbox": [x1, y1, x2, y2],
       "interactive": true,
       "confidence": 0.90,
@@ -1325,15 +1397,15 @@ Return ONLY valid JSON:
             content: prompt,
             images: [imageData],
           },
-          // Prefill the assistant response to force JSON output and skip verbose thinking
+          // Prefill with JSON code fence start; do not truncate reasoning with </think>
           {
             role: 'assistant',
-            content: '</think>\n```json\n{',
+            content: '```json\n{',
           },
         ],
         stream: false,
         options: {
-          num_predict: 2048,  // enough for ~25-30 elements
+          num_predict: 2048,  // enough for complete element list
           temperature: 0.1,
         },
       }
@@ -1384,12 +1456,28 @@ Return ONLY valid JSON:
         }
       }
 
+      const promptEvalMs = nanoToMs(parsed.prompt_eval_duration)
+      const evalMs = nanoToMs(parsed.eval_duration)
+      const totalOllamaMs = nanoToMs(parsed.total_duration)
+      const totalWallMs = Date.now() - startTime
+
       console.log(
         `[OllamaVisionProvider] Diagnostic (Screen Understanding): status=${response.status}, ` +
         `content_len=${parsed.message?.content?.length || 0}, ` +
         `thinking_len=${parsed.message?.thinking?.length || 0}, ` +
-        `done_reason=${parsed.done_reason}, tokens=${parsed.eval_count}`
+        `done_reason=${parsed.done_reason}, ` +
+        `timing: vision_prompt_eval=${promptEvalMs != null ? promptEvalMs + 'ms' : 'n/a'} (${parsed.prompt_eval_count ?? 0} tokens), ` +
+        `generation=${evalMs != null ? evalMs + 'ms' : 'n/a'} (${parsed.eval_count ?? 0} tokens), ` +
+        `ollama_total=${totalOllamaMs != null ? totalOllamaMs + 'ms' : 'n/a'}, ` +
+        `wall_time=${totalWallMs}ms`
       )
+
+      if (parsed.done_reason === 'length') {
+        console.warn(
+          `[OllamaVisionProvider] Warning: Model output was truncated by token limit (done_reason=length). ` +
+          `Generated tokens=${parsed.eval_count}. Salvaging partial element list...`
+        )
+      }
 
       const totalTokens =
         typeof parsed.eval_count === 'number' && typeof parsed.prompt_eval_count === 'number'
