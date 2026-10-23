@@ -81,7 +81,9 @@ export function createCursorCrop(
   const cropSize = cropped.getSize()
   const rawBitmap = cropped.toBitmap()
 
-  // Draw a distinct, high-contrast red crosshair with black outline at (cropCursorX, cropCursorY)
+  // Draw a high-contrast open-center precision reticle at (cropCursorX, cropCursorY).
+  // The center aperture (radius < 5.2 px) is left 100% untouched so small icon glyphs
+  // (e.g. Pause, Play, tiny buttons) remain completely visible and unobstructed.
   function setPixel(x: number, y: number, r: number, g: number, b: number, a: number = 255): void {
     if (x < 0 || x >= cropSize.width || y < 0 || y >= cropSize.height) return
     const idx = (y * cropSize.width + x) * 4
@@ -92,31 +94,49 @@ export function createCursorCrop(
     rawBitmap[idx + 3] = a
   }
 
-  const arm = 10
-  const gap = 2
-
-  // Horizontal crosshair with dark outline
-  for (let dx = -arm; dx <= arm; dx++) {
-    if (Math.abs(dx) <= gap) continue
-    setPixel(cropCursorX + dx, cropCursorY - 1, 0, 0, 0)
-    setPixel(cropCursorX + dx, cropCursorY + 1, 0, 0, 0)
-    setPixel(cropCursorX + dx, cropCursorY, 255, 30, 30)
+  // 1. Circular reticle ring framing the cursor with open center
+  //    Inner radius < 5.2px is untouched; ring is drawn at r ~ 6.4..7.8 with black borders
+  for (let dy = -9; dy <= 9; dy++) {
+    for (let dx = -9; dx <= 9; dx++) {
+      const d = Math.hypot(dx, dy)
+      // Inner black outline
+      if (d >= 5.2 && d < 6.4) {
+        setPixel(cropCursorX + dx, cropCursorY + dy, 0, 0, 0)
+      }
+      // Main vibrant red reticle ring
+      else if (d >= 6.4 && d <= 7.8) {
+        setPixel(cropCursorX + dx, cropCursorY + dy, 255, 35, 35)
+      }
+      // Outer black outline
+      else if (d > 7.8 && d <= 8.8) {
+        setPixel(cropCursorX + dx, cropCursorY + dy, 0, 0, 0)
+      }
+    }
   }
 
-  // Vertical crosshair with dark outline
-  for (let dy = -arm; dy <= arm; dy++) {
-    if (Math.abs(dy) <= gap) continue
-    setPixel(cropCursorX - 1, cropCursorY + dy, 0, 0, 0)
-    setPixel(cropCursorX + 1, cropCursorY + dy, 0, 0, 0)
-    setPixel(cropCursorX, cropCursorY + dy, 255, 30, 30)
+  // 2. Directional pointer ticks pointing toward center from outside the ring (distance 9 to 13 px)
+  const tickStart = 9
+  const tickEnd = 13
+
+  // Horizontal ticks (left and right)
+  for (const sign of [-1, 1]) {
+    for (let i = tickStart; i <= tickEnd; i++) {
+      const dx = sign * i
+      setPixel(cropCursorX + dx, cropCursorY - 1, 0, 0, 0)
+      setPixel(cropCursorX + dx, cropCursorY + 1, 0, 0, 0)
+      setPixel(cropCursorX + dx, cropCursorY, 255, 35, 35)
+    }
   }
 
-  // Center indicator with outline
-  setPixel(cropCursorX, cropCursorY, 255, 30, 30)
-  setPixel(cropCursorX - 1, cropCursorY, 0, 0, 0)
-  setPixel(cropCursorX + 1, cropCursorY, 0, 0, 0)
-  setPixel(cropCursorX, cropCursorY - 1, 0, 0, 0)
-  setPixel(cropCursorX, cropCursorY + 1, 0, 0, 0)
+  // Vertical ticks (top and bottom)
+  for (const sign of [-1, 1]) {
+    for (let i = tickStart; i <= tickEnd; i++) {
+      const dy = sign * i
+      setPixel(cropCursorX - 1, cropCursorY + dy, 0, 0, 0)
+      setPixel(cropCursorX + 1, cropCursorY + dy, 0, 0, 0)
+      setPixel(cropCursorX, cropCursorY + dy, 255, 35, 35)
+    }
+  }
 
   const markedImage = nativeImage.createFromBitmap(rawBitmap, {
     width: cropSize.width,

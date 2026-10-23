@@ -23,6 +23,7 @@ export async function analyzeCursor(params: {
   cursorY: number
   screenWidth: number
   screenHeight: number
+  provider?: VisionProviderId
 }): Promise<CursorAnalysisResponse> {
   return window.flowAI.analyzeCursor(params)
 }

@@ -92,7 +92,8 @@ export type ScreenElementType =
   | 'navigation_item' | 'card' | 'list' | 'list_item' | 'table' | 'table_row'
   | 'dialog' | 'modal' | 'panel' | 'video' | 'image' | 'thumbnail' | 'text_block'
   | 'message' | 'message_bubble' | 'chat' | 'chat_row' | 'profile' | 'icon'
-  | 'checkbox' | 'radio' | 'dropdown' | 'scrollbar' | 'other'
+  | 'checkbox' | 'radio' | 'dropdown' | 'scrollbar'
+  | 'terminal' | 'command_line' | 'code_block' | 'output_area' | 'other'
 
 export interface ScreenElement {
   id: string
@@ -119,11 +120,68 @@ export interface ScreenUnderstandingResult {
   model: string
   durationMs: number
   totalTokens: number | null
+  truncated?: boolean
 }
 
 export type ScreenUnderstandingResponse =
   | { ok: true; data: ScreenUnderstandingResult }
   | { ok: false; error: string }
+
+// ─── Stage 3: Chat & Conversation Types ───────────────────────────────────────
+export type ChatRole = 'user' | 'assistant' | 'system'
+
+export interface ChatMessage {
+  role: ChatRole
+  content: string
+  imageContext?: string
+}
+
+export interface ChatResult {
+  content: string
+  model: string
+  provider: string
+  durationMs: number
+  totalTokens: number | null
+}
+
+export type ChatResponse =
+  | { ok: true; data: ChatResult }
+  | { ok: false; error: string }
+
+export interface ChatOptions {
+  model?: string
+  temperature?: number
+  maxOutputTokens?: number
+}
+
+export interface CursorShortcutPayload {
+  capture: CaptureResponse
+  cursor: { x: number; y: number }
+}
+
+export type CursorShortcutPayload = {
+  capture: CaptureResponse
+  cursor: { x: number; y: number }
+}
+
+export interface CursorShortcutInfo {
+  registered: boolean
+  shortcut: string
+  displayShortcut: string
+  isFallback: boolean
+  diagnostic?: string
+}
+
+// ─── Vision Provider Types ──────────────────────────────────────────────────
+export type VisionProviderId = 'gemini' | 'ollama'
+
+export interface VisionProviderStatus {
+  id: VisionProviderId
+  name: string
+  ready: boolean
+  message: string
+  model: string
+}
 
 // ─── Type definitions (also exported for use in renderer via window.flowAI) ──
 export interface FlowAIBridge {
@@ -137,10 +195,10 @@ export interface FlowAIBridge {
    */
   captureScreen: () => Promise<CaptureResponse>
   /**
-   * Send a captured screenshot (as a data URL) to the local AI provider.
+   * Send a captured screenshot (as a data URL) to the active AI provider.
    * Resolves — never rejects; errors are returned as { ok: false }.
    */
-  analyzeScreen: (dataUrl: string) => Promise<AnalysisResponse>
+  analyzeScreen: (dataUrl: string, prompt?: string, provider?: VisionProviderId) => Promise<AnalysisResponse>
   /**
    * Get current desktop mouse cursor coordinates { x, y } in screen space.
    */
@@ -154,6 +212,7 @@ export interface FlowAIBridge {
     cursorY: number
     screenWidth: number
     screenHeight: number
+    provider?: VisionProviderId
   }) => Promise<CursorAnalysisResponse>
   /**
    * Foundation 4B-2: Structured multi-element screen understanding.
@@ -165,7 +224,20 @@ export interface FlowAIBridge {
     screenHeight: number
     cursorX?: number
     cursorY?: number
+    provider?: VisionProviderId
   }) => Promise<ScreenUnderstandingResponse>
+  /**
+   * Get active vision provider and health/readiness statuses for all vision providers.
+   */
+  getVisionProvider: () => Promise<{ active: VisionProviderId; statuses: Record<VisionProviderId, VisionProviderStatus> }>
+  /**
+   * Switch active vision provider ('gemini' | 'ollama').
+   */
+  setVisionProvider: (provider: VisionProviderId) => Promise<{ ok: boolean; active?: VisionProviderId; error?: string }>
+  /**
+   * Query status of a specific vision provider or all vision providers.
+   */
+  getVisionStatus: (provider?: VisionProviderId) => Promise<VisionProviderStatus | Record<VisionProviderId, VisionProviderStatus>>
   /**
    * Foundation 4B-1: Subscribe to global keyboard shortcut trigger.
    */
@@ -174,6 +246,22 @@ export interface FlowAIBridge {
    * Get registration status and active key combination for the cursor shortcut.
    */
   getCursorShortcutInfo: () => Promise<CursorShortcutInfo>
+  /**
+   * Stage 3: Send conversational chat messages to the active AI provider.
+   */
+  sendChatMessage: (messages: ChatMessage[], options?: ChatOptions) => Promise<ChatResponse>
+  /**
+   * Stage 3: Check whether an API key is configured for a specific provider.
+   */
+  hasApiKey: (provider: string) => Promise<boolean>
+  /**
+   * Stage 3: Securely save an API key for a specific provider in OS encrypted storage.
+   */
+  setApiKey: (provider: string, key: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Stage 3: Delete a stored API key for a provider.
+   */
+  deleteApiKey: (provider: string) => Promise<{ ok: boolean; error?: string }>
   /**
    * Generic IPC invoke — renderer calls main-process handlers by channel name.
    */
@@ -185,19 +273,6 @@ export interface FlowAIBridge {
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void
 }
 
-export interface CursorShortcutPayload {
-  capture: CaptureResponse
-  cursor: { x: number; y: number }
-}
-
-export interface CursorShortcutInfo {
-  registered: boolean
-  shortcut: string
-  displayShortcut: string
-  isFallback: boolean
-  diagnostic?: string
-}
-
 // ─── Allowed IPC channels (whitelist) ────────────────────────────────────────
 const ALLOWED_INVOKE_CHANNELS: string[] = [
   'screen:capture',          // Foundation 2: capture primary display
@@ -206,6 +281,13 @@ const ALLOWED_INVOKE_CHANNELS: string[] = [
   'ai:analyzeCursor',        // Foundation 4B-1: analyze element at cursor
   'ai:analyzeScreen',        // Foundation 4B-2: structured screen understanding
   'cursor:getShortcutInfo',   // Global shortcut registration status & active key
+  'vision:getProvider',      // Switchable vision: get active provider and statuses
+  'vision:setProvider',      // Switchable vision: set active provider
+  'vision:getStatus',        // Switchable vision: get provider readiness
+  'chat:send',               // Stage 3: general-purpose AI chat
+  'credentials:hasKey',      // Stage 3: check if API key exists
+  'credentials:setKey',      // Stage 3: save encrypted API key
+  'credentials:deleteKey',   // Stage 3: remove API key
 ]
 
 const ALLOWED_EVENT_CHANNELS: string[] = [
@@ -220,8 +302,8 @@ const api: FlowAIBridge = {
   captureScreen: () =>
     ipcRenderer.invoke('screen:capture') as Promise<CaptureResponse>,
 
-  analyzeScreen: (dataUrl: string) =>
-    ipcRenderer.invoke('ai:analyze', dataUrl) as Promise<AnalysisResponse>,
+  analyzeScreen: (dataUrl: string, prompt?: string, provider?: VisionProviderId) =>
+    ipcRenderer.invoke('ai:analyze', dataUrl, prompt, provider) as Promise<AnalysisResponse>,
 
   getCursorPoint: () =>
     ipcRenderer.invoke('cursor:getPoint') as Promise<{ x: number; y: number }>,
@@ -232,6 +314,7 @@ const api: FlowAIBridge = {
     cursorY: number
     screenWidth: number
     screenHeight: number
+    provider?: VisionProviderId
   }) =>
     ipcRenderer.invoke('ai:analyzeCursor', params) as Promise<CursorAnalysisResponse>,
 
@@ -241,8 +324,18 @@ const api: FlowAIBridge = {
     screenHeight: number
     cursorX?: number
     cursorY?: number
+    provider?: VisionProviderId
   }) =>
     ipcRenderer.invoke('ai:analyzeScreen', params) as Promise<ScreenUnderstandingResponse>,
+
+  getVisionProvider: () =>
+    ipcRenderer.invoke('vision:getProvider') as Promise<{ active: VisionProviderId; statuses: Record<VisionProviderId, VisionProviderStatus> }>,
+
+  setVisionProvider: (provider: VisionProviderId) =>
+    ipcRenderer.invoke('vision:setProvider', provider) as Promise<{ ok: boolean; active?: VisionProviderId; error?: string }>,
+
+  getVisionStatus: (provider?: VisionProviderId) =>
+    ipcRenderer.invoke('vision:getStatus', provider) as Promise<VisionProviderStatus | Record<VisionProviderId, VisionProviderStatus>>,
 
   onCursorShortcut: (callback: (payload: CursorShortcutPayload) => void) => {
     const subscription = (_event: Electron.IpcRendererEvent, payload: unknown) => {
@@ -254,6 +347,18 @@ const api: FlowAIBridge = {
 
   getCursorShortcutInfo: () =>
     ipcRenderer.invoke('cursor:getShortcutInfo') as Promise<CursorShortcutInfo>,
+
+  sendChatMessage: (messages: ChatMessage[], options?: ChatOptions) =>
+    ipcRenderer.invoke('chat:send', { messages, options }) as Promise<ChatResponse>,
+
+  hasApiKey: (provider: string) =>
+    ipcRenderer.invoke('credentials:hasKey', provider) as Promise<boolean>,
+
+  setApiKey: (provider: string, key: string) =>
+    ipcRenderer.invoke('credentials:setKey', { provider, key }) as Promise<{ ok: boolean; error?: string }>,
+
+  deleteApiKey: (provider: string) =>
+    ipcRenderer.invoke('credentials:deleteKey', provider) as Promise<{ ok: boolean; error?: string }>,
 
   invoke: (channel: string, ...args: unknown[]) => {
     if (!ALLOWED_INVOKE_CHANNELS.includes(channel)) {
@@ -276,3 +381,4 @@ const api: FlowAIBridge = {
 }
 
 contextBridge.exposeInMainWorld('flowAI', api)
+

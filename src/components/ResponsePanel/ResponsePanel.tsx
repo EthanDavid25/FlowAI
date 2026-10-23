@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AiState } from '../../hooks/useAiAnalysis'
+import ChatPanel from '../ChatPanel/ChatPanel'
 import styles from './ResponsePanel.module.css'
 
 /** AI "spark" icon */
@@ -136,20 +137,40 @@ function elementTypeLabel(type: ScreenElementType): string {
 interface ResponsePanelProps {
   aiState: AiState
   isCapturing?: boolean
+  latestScreenshot?: string | null
+  activeVisionProvider?: VisionProviderId
 }
 
 /**
- * ResponsePanel — displays the AI analysis response.
+ * ResponsePanel — displays the AI analysis response and interactive AI chat.
  *
  * Supports:
- *   - Foundation 3: Full screen analysis (`mode: 'screen'`) — legacy path
- *   - Foundation 4B-1: Cursor element awareness (`mode: 'cursor'`)
- *   - Foundation 4B-2: Structured screen understanding (`mode: 'screenUnderstanding'`)
+ *   - Vision Analysis:
+ *       * Foundation 3: Full screen analysis (`mode: 'screen'`) — legacy path
+ *       * Foundation 4B-1: Cursor element awareness (`mode: 'cursor'`)
+ *       * Foundation 4B-2: Structured screen understanding (`mode: 'screenUnderstanding'`)
+ *   - AI Chat (Stage 3):
+ *       * Conversational Q&A with Gemini 3.8 Flash
+ *       * Optional screenshot context attachment
+ *       * Secure DPAPI-encrypted API key management
  */
-export default function ResponsePanel({ aiState, isCapturing = false }: ResponsePanelProps) {
+export default function ResponsePanel({
+  aiState,
+  isCapturing = false,
+  latestScreenshot,
+  activeVisionProvider,
+}: ResponsePanelProps) {
   const { status, mode, screenResult, cursorResult, screenUnderstandingResult, errorMessage } = aiState
 
+  const [activeTab, setActiveTab] = useState<'vision' | 'chat'>('vision')
   const [shortcutText, setShortcutText] = useState('Ctrl + Shift + F')
+
+  // Automatically switch to vision tab if screen/cursor analysis is initiated
+  useEffect(() => {
+    if (isCapturing || status === 'analyzing') {
+      setActiveTab('vision')
+    }
+  }, [isCapturing, status])
 
   useEffect(() => {
     window.flowAI?.getCursorShortcutInfo?.().then((info) => {
@@ -208,12 +229,39 @@ export default function ResponsePanel({ aiState, isCapturing = false }: Response
   return (
     <section className={styles.panel} aria-label="AI analysis response">
       <div className={styles.panelHeader}>
-        <h2 className={styles.panelTitle}>AI Analysis</h2>
-        <span className={chipClass}>
-          <span className={dotClass} aria-hidden="true" />
-          {chipText}
-        </span>
+        <div className={styles.tabGroup} role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'vision'}
+            className={`${styles.tabBtn} ${activeTab === 'vision' ? styles.tabBtnActive : ''}`}
+            onClick={() => setActiveTab('vision')}
+          >
+            Vision Analysis
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'chat'}
+            className={`${styles.tabBtn} ${activeTab === 'chat' ? styles.tabBtnActive : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            AI Chat
+          </button>
+        </div>
+
+        {activeTab === 'vision' && (
+          <span className={chipClass}>
+            <span className={dotClass} aria-hidden="true" />
+            {chipText}
+          </span>
+        )}
       </div>
+
+      {activeTab === 'chat' ? (
+        <ChatPanel latestScreenshot={latestScreenshot} />
+      ) : (
+        <>
 
       <div className={styles.body}>
         {/* State 1: Capturing in progress */}
@@ -238,10 +286,11 @@ export default function ResponsePanel({ aiState, isCapturing = false }: Response
                 ? 'Identifying UI element at cursor…'
                 : mode === 'screenUnderstanding'
                 ? 'Understanding visible screen elements…'
-                : 'Analyzing screen with local AI…'}
+                : 'Analyzing screen with AI…'}
             </p>
             <p className={styles.loadingHint}>
-              Running <strong>qwen3-vl:2b</strong> via local Ollama.
+              Running <strong>{activeVisionProvider === 'gemini' ? 'gemini-3.8-flash' : 'qwen3-vl:2b'}</strong> via{' '}
+              {activeVisionProvider === 'gemini' ? 'Google Gemini' : 'local Ollama'}.
               {mode === 'cursor'
                 ? ' Examining visual coordinates under your mouse.'
                 : mode === 'screenUnderstanding'
@@ -368,122 +417,155 @@ export default function ResponsePanel({ aiState, isCapturing = false }: Response
         )}
 
         {/* State 4B: Screen Understanding Success (Foundation 4B-2) */}
-        {!isCapturing && status === 'success' && mode === 'screenUnderstanding' && screenUnderstandingResult && (
-          <div className={`${styles.screenUnderstandingWrapper} selectable`}>
-            {/* Screen metadata header */}
-            <div className={styles.suHeader}>
-              <div className={styles.suHeaderLeft}>
-                <div className={styles.elementBadge}>
-                  <GridIcon />
-                  <span>Screen Understanding</span>
-                </div>
-                <h3 className={styles.suApp}>{screenUnderstandingResult.screen.application}</h3>
-                {screenUnderstandingResult.screen.description && (
-                  <p className={styles.suDesc}>{screenUnderstandingResult.screen.description}</p>
-                )}
-              </div>
-              <div className={styles.suStats}>
-                <span className={styles.suStatBadge}>
-                  {screenUnderstandingResult.elements.length} elements
-                </span>
-              </div>
-            </div>
+        {/* State 4B: Screen Understanding Success (Foundation 4B-2) */}
+        {!isCapturing && status === 'success' && mode === 'screenUnderstanding' && screenUnderstandingResult && (() => {
+          const cursorTarget = screenUnderstandingResult.cursorTarget
+          const totalCount = screenUnderstandingResult.elements.length
 
-            {/* Cursor target highlight */}
-            {screenUnderstandingResult.cursorTarget && (
-              <div className={styles.cursorTargetCard}>
-                <div className={styles.cursorTargetHeader}>
-                  <TargetIcon />
-                  <span>Cursor Target</span>
+          // Exclude the element already represented in the Cursor Target card to avoid visual duplicates
+          const otherElements = screenUnderstandingResult.elements.filter((el) => {
+            if (!cursorTarget) return true
+            // Match by stable element ID if available
+            if (el.id && cursorTarget.id && el.id === cursorTarget.id) return false
+            // Fallback: match by identical type, label, and bounding box
+            if (
+              el.type === cursorTarget.type &&
+              el.label === cursorTarget.label &&
+              el.bbox?.x1 === cursorTarget.bbox?.x1 &&
+              el.bbox?.y1 === cursorTarget.bbox?.y1 &&
+              el.bbox?.x2 === cursorTarget.bbox?.x2 &&
+              el.bbox?.y2 === cursorTarget.bbox?.y2
+            ) {
+              return false
+            }
+            return true
+          })
+
+          return (
+            <div className={`${styles.screenUnderstandingWrapper} selectable`}>
+              {/* Screen metadata header */}
+              <div className={styles.suHeader}>
+                <div className={styles.suHeaderLeft}>
+                  <div className={styles.elementBadge}>
+                    <GridIcon />
+                    <span>Screen Understanding</span>
+                  </div>
+                  <h3 className={styles.suApp}>{screenUnderstandingResult.screen.application}</h3>
+                  {screenUnderstandingResult.screen.description && (
+                    <p className={styles.suDesc}>{screenUnderstandingResult.screen.description}</p>
+                  )}
                 </div>
-                <div className={styles.cursorTargetBody}>
-                  <span className={styles.suElementType}>
-                    {elementTypeLabel(screenUnderstandingResult.cursorTarget.type)}
+                <div className={styles.suStats}>
+                  <span className={styles.suStatBadge}>
+                    {totalCount} {totalCount === 1 ? 'element' : 'elements'}
                   </span>
-                  <span className={styles.suElementLabel}>
-                    {screenUnderstandingResult.cursorTarget.label}
-                  </span>
-                  {screenUnderstandingResult.cursorTarget.state && (
-                    <span className={styles.suElementState}>
-                      {screenUnderstandingResult.cursorTarget.state}
+                  {screenUnderstandingResult.truncated && (
+                    <span
+                      className={styles.suTruncatedBadge}
+                      title="Response was truncated by token limit; some elements may not be listed"
+                    >
+                      ⚠️ Partial (token limit)
                     </span>
                   )}
                 </div>
-                {screenUnderstandingResult.cursorTarget.description && (
-                  <p className={styles.suElementDesc}>
-                    {screenUnderstandingResult.cursorTarget.description}
-                  </p>
-                )}
-                {screenUnderstandingResult.cursorTarget.bbox && (
-                  <p className={styles.suElementBbox}>
-                    bbox: {screenUnderstandingResult.cursorTarget.bbox.x1},{screenUnderstandingResult.cursorTarget.bbox.y1} → {screenUnderstandingResult.cursorTarget.bbox.x2},{screenUnderstandingResult.cursorTarget.bbox.y2}
-                    {screenUnderstandingResult.cursorTarget.center && (
-                      <> · center: {screenUnderstandingResult.cursorTarget.center.x},{screenUnderstandingResult.cursorTarget.center.y}</>
-                    )}
-                  </p>
-                )}
               </div>
-            )}
 
-            {/* No elements detected */}
-            {screenUnderstandingResult.elements.length === 0 && (
-              <div className={styles.lowConfidenceAlert}>
-                <span className={styles.alertIcon}>ℹ️</span>
-                <span>No distinct UI elements were confidently identified in this screenshot.</span>
-              </div>
-            )}
-
-            {/* Element list */}
-            {screenUnderstandingResult.elements.length > 0 && (
-              <div className={styles.suElementList}>
-                {screenUnderstandingResult.elements.map((el) => (
-                  <div
-                    key={el.id}
-                    className={`${styles.suElementRow} ${el.containsCursor ? styles.suElementRowCursor : ''}`}
-                  >
-                    <div className={styles.suElementRowMain}>
-                      <span className={styles.suElementType}>
-                        {elementTypeLabel(el.type)}
+              {/* Cursor target highlight */}
+              {cursorTarget && (
+                <div className={styles.cursorTargetCard}>
+                  <div className={styles.cursorTargetHeader}>
+                    <TargetIcon />
+                    <span>Cursor Target</span>
+                  </div>
+                  <div className={styles.cursorTargetBody}>
+                    <span className={styles.suElementType}>
+                      {elementTypeLabel(cursorTarget.type)}
+                    </span>
+                    <span className={styles.suElementLabel}>
+                      {cursorTarget.label}
+                    </span>
+                    {cursorTarget.state && (
+                      <span className={styles.suElementState}>
+                        {cursorTarget.state}
                       </span>
-                      <span className={styles.suElementLabel}>{el.label}</span>
-                      {el.state && (
-                        <span className={styles.suElementState}>{el.state}</span>
-                      )}
-                      {el.interactive && (
-                        <span className={styles.suInteractiveBadge} title="Interactive element">⚡</span>
-                      )}
-                      {el.containsCursor && (
-                        <span className={styles.suCursorBadge} title="Cursor is here">◎</span>
-                      )}
-                      <span
-                        className={
-                          el.confidence >= 0.75
-                            ? styles.confidenceHigh
-                            : el.confidence >= 0.45
-                            ? styles.confidenceMedium
-                            : styles.confidenceLow
-                        }
-                      >
-                        {Math.round(el.confidence * 100)}%
-                      </span>
-                    </div>
-                    {el.description && (
-                      <p className={styles.suElementDesc}>{el.description}</p>
-                    )}
-                    {el.bbox && (
-                      <p className={styles.suElementBbox}>
-                        bbox: {el.bbox.x1},{el.bbox.y1} → {el.bbox.x2},{el.bbox.y2}
-                        {el.center && (
-                          <> · center: {el.center.x},{el.center.y}</>
-                        )}
-                      </p>
                     )}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                  {cursorTarget.description && (
+                    <p className={styles.suElementDesc}>
+                      {cursorTarget.description}
+                    </p>
+                  )}
+                  {cursorTarget.bbox && (
+                    <p className={styles.suElementBbox}>
+                      bbox: {cursorTarget.bbox.x1},{cursorTarget.bbox.y1} → {cursorTarget.bbox.x2},{cursorTarget.bbox.y2}
+                      {cursorTarget.center && (
+                        <> · center: {cursorTarget.center.x},{cursorTarget.center.y}</>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* No elements detected */}
+              {totalCount === 0 && (
+                <div className={styles.lowConfidenceAlert}>
+                  <span className={styles.alertIcon}>ℹ️</span>
+                  <span>No distinct UI elements were confidently identified in this screenshot.</span>
+                </div>
+              )}
+
+              {/* Element list (excluding the element already featured in the cursor target card) */}
+              {otherElements.length > 0 && (
+                <div className={styles.suElementList}>
+                  {otherElements.map((el) => (
+                    <div
+                      key={el.id}
+                      className={`${styles.suElementRow} ${el.containsCursor ? styles.suElementRowCursor : ''}`}
+                    >
+                      <div className={styles.suElementRowMain}>
+                        <span className={styles.suElementType}>
+                          {elementTypeLabel(el.type)}
+                        </span>
+                        <span className={styles.suElementLabel}>{el.label}</span>
+                        {el.state && (
+                          <span className={styles.suElementState}>{el.state}</span>
+                        )}
+                        {el.interactive && (
+                          <span className={styles.suInteractiveBadge} title="Interactive element">⚡</span>
+                        )}
+                        {el.containsCursor && (
+                          <span className={styles.suCursorBadge} title="Cursor is here">◎</span>
+                        )}
+                        <span
+                          className={
+                            el.confidence >= 0.75
+                              ? styles.confidenceHigh
+                              : el.confidence >= 0.45
+                              ? styles.confidenceMedium
+                              : styles.confidenceLow
+                          }
+                        >
+                          {Math.round(el.confidence * 100)}%
+                        </span>
+                      </div>
+                      {el.description && (
+                        <p className={styles.suElementDesc}>{el.description}</p>
+                      )}
+                      {el.bbox && (
+                        <p className={styles.suElementBbox}>
+                          bbox: {el.bbox.x1},{el.bbox.y1} → {el.bbox.x2},{el.bbox.y2}
+                          {el.center && (
+                            <> · center: {el.center.x},{el.center.y}</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* State 4C: Full Screen Vision Analysis Success (Foundation 3 — legacy free-text) */}
         {!isCapturing && status === 'success' && mode === 'screen' && screenResult && (
@@ -511,6 +593,14 @@ export default function ResponsePanel({ aiState, isCapturing = false }: Response
 
       <div className={styles.panelFooter}>
         <div className={styles.footerRow}>
+          <span className={styles.footerLabel}>Provider</span>
+          <span className={styles.footerValue}>
+            {activeModel.toLowerCase().includes('gemini') || (!activeModel.toLowerCase().includes('qwen') && activeVisionProvider === 'gemini')
+              ? 'Gemini Vision'
+              : 'Ollama Vision'}
+          </span>
+        </div>
+        <div className={styles.footerRow}>
           <span className={styles.footerLabel}>Model</span>
           <span className={styles.footerValue}>{activeModel}</span>
         </div>
@@ -525,6 +615,8 @@ export default function ResponsePanel({ aiState, isCapturing = false }: Response
           </div>
         )}
       </div>
+        </>
+      )}
     </section>
   )
 }

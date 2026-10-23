@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useScreenCapture } from '../hooks/useScreenCapture'
 import { useAiAnalysis } from '../hooks/useAiAnalysis'
 import { getCursorPoint } from '../services/ai/cursorAnalysis'
+import type { VisionProviderId } from '../types/screenUnderstanding'
 import Header from '../components/Header/Header'
 import ScreenPanel from '../components/ScreenPanel/ScreenPanel'
 import ResponsePanel from '../components/ResponsePanel/ResponsePanel'
@@ -23,6 +24,15 @@ export default function Dashboard() {
   const { aiState, triggerCursorAnalysis, triggerScreenUnderstanding } = useAiAnalysis()
 
   const [activeMode, setActiveMode] = useState<'screen' | 'cursor' | null>(null)
+  const [activeVisionProvider, setActiveVisionProvider] = useState<VisionProviderId>('gemini')
+
+  useEffect(() => {
+    window.flowAI?.getVisionProvider?.().then((res) => {
+      if (res?.active) {
+        setActiveVisionProvider(res.active)
+      }
+    }).catch(() => {})
+  }, [])
 
   const isCapturing = captureState.status === 'loading'
   const isAnalyzing = aiState.status === 'analyzing'
@@ -143,7 +153,12 @@ export default function Dashboard() {
   captureState={captureState}
   screenUnderstandingResult={aiState.screenUnderstandingResult}
 />
-        <ResponsePanel aiState={aiState} isCapturing={isCapturing} />
+        <ResponsePanel
+          aiState={aiState}
+          isCapturing={isCapturing}
+          latestScreenshot={captureState.result?.dataUrl}
+          activeVisionProvider={activeVisionProvider}
+        />
       </div>
       <ActionBar
         onAnalyzeScreen={handleAnalyzeScreen}
@@ -151,6 +166,8 @@ export default function Dashboard() {
         isCapturing={isCapturing}
         isAnalyzing={isAnalyzing}
         activeMode={activeMode}
+        activeVisionProvider={activeVisionProvider}
+        onVisionProviderChange={(prov) => setActiveVisionProvider(prov)}
       />
     </div>
   )

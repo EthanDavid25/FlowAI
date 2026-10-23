@@ -27,6 +27,7 @@ export async function analyzeScreen(params: {
   screenHeight: number
   cursorX?: number
   cursorY?: number
+  provider?: VisionProviderId
 }): Promise<ScreenUnderstandingResponse> {
   return window.flowAI.analyzeScreenStructured(params)
 }

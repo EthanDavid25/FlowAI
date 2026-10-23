@@ -1,0 +1,237 @@
+.selectorContainer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.selectorWrapper {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-bg-card, #1e1e24);
+  border: 1px solid var(--color-border, #33333f);
+  border-radius: var(--radius-md, 8px);
+  padding: 2px;
+  gap: 2px;
+}
+
+.providerBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--color-text-secondary, #94a3b8);
+  font-size: var(--text-xs, 12px);
+  font-weight: var(--font-medium, 500);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.15s ease);
+  white-space: nowrap;
+}
+
+.providerBtn:hover:not(:disabled) {
+  color: var(--color-text-primary, #f1f5f9);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.providerBtnActive {
+  background: var(--color-bg-active, #2b2b36) !important;
+  color: var(--color-text-primary, #ffffff) !important;
+  font-weight: var(--font-semibold, 600);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusReady {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.statusNotReady {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.statusError {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.modelBadge {
+  font-size: 10px;
+  color: var(--color-text-muted, #64748b);
+  font-weight: 400;
+}
+
+.providerBtnActive .modelBadge {
+  color: #a5b4fc;
+}
+
+.keyConfigBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-muted, #94a3b8);
+  cursor: pointer;
+  margin-left: 2px;
+  transition: color var(--transition-fast, 0.15s ease);
+}
+
+.keyConfigBtn:hover {
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.1);
+}
+
+/* ── Key Setup Modal ─────────────────────────────────────────────────────── */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.15s ease;
+}
+
+.modal {
+  background: #1c1c24;
+  border: 1px solid #383848;
+  border-radius: 12px;
+  padding: 24px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px;
+}
+
+.closeBtn:hover {
+  color: #f1f5f9;
+}
+
+.modalDesc {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.inputGroup {
+  margin-bottom: 16px;
+}
+
+.keyInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: #121217;
+  border: 1px solid #383848;
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 13px;
+  font-family: monospace;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.keyInput:focus {
+  border-color: #6366f1;
+}
+
+.feedbackError {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #f87171;
+}
+
+.feedbackSuccess {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #34d399;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.cancelBtn {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid #383848;
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cancelBtn:hover {
+  background: #272733;
+}
+
+.saveBtn {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  border: none;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.saveBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

@@ -833,7 +833,8 @@ function parseScreenUnderstandingResult(
   cursorY: number | undefined,
   model: string,
   durationMs: number,
-  totalTokens: number | null
+  totalTokens: number | null,
+  truncated?: boolean
 ): ScreenUnderstandingResult {
   const EMPTY_RESULT: ScreenUnderstandingResult = {
     screen: { application: 'Unknown', description: 'No meaningful UI elements confidently identified.' },
@@ -842,6 +843,7 @@ function parseScreenUnderstandingResult(
     model,
     durationMs,
     totalTokens,
+    truncated: Boolean(truncated),
   }
 
   if (!rawObj || typeof rawObj !== 'object') return EMPTY_RESULT
@@ -961,6 +963,7 @@ function parseScreenUnderstandingResult(
     model,
     durationMs,
     totalTokens,
+    truncated: Boolean(truncated),
   }
 }
 
@@ -994,16 +997,22 @@ SCAN REGIONS & APPLICATION TYPES TO COVER:
 3. Code Editors & Development Tools:
    - Editor panes and code blocks ("code_block").
    - File trees and sidebars ("sidebar", "navigation_item"), editor tabs ("browser_tab"), status bars ("panel").
-4. Other Desktop Applications & Dialogs:
+4. Media Players & Audio/Video Streaming (e.g. Spotify, music players, streaming apps):
+   - Player window, navigation, and library sidebars ("sidebar", "navigation_item").
+   - Playback bar and controls: Play/Pause button ("button" or "icon", state "active" or "inactive"), previous/next track buttons ("button" or "icon"), shuffle/repeat buttons ("button" or "icon").
+   - Playback timeline or seek bar ("scrollbar" or "panel", description with current progress or duration if visible), volume controls ("button" or "icon").
+   - Currently playing track information: track title, artist name, and album text ("text_block"), album artwork ("thumbnail" or "image").
+   - Search inputs ("search_input"), playlist items, song list rows, or library links ("navigation_item", "list_item", "link").
+5. Other Desktop Applications & Dialogs:
    - Dialogs ("dialog"), message bubbles ("message_bubble"), panels ("panel"), buttons ("button"), and visible content.
 
 RULES:
-1. SCREEN SUMMARY: Provide an accurate, factual summary in screen.description of what the user is doing and the observable state of the window (e.g. running commands, viewing a website, encountering an error, editing a file). Distinguish clearly between visible facts and uncertainty. Never invent commands, actions, or results not visible in the screenshot.
+1. SCREEN SUMMARY: Provide an accurate, factual summary in screen.description of what the user is doing and the observable state of the window (e.g. playing/paused media in a music player, running commands in a terminal, viewing a website, encountering an error, editing a file). Distinguish clearly between visible facts and uncertainty. Never invent commands, playback states, actions, or results not visible in the screenshot.
 2. ELEMENT LIMIT: Prioritize the 10 to 12 most important or prominent elements on screen to fit within output limits.
 3. BOUNDING BOXES: Normalized [x1, y1, x2, y2] from 0 to 1000 where (0,0) is top-left and (1000,1000) is bottom-right.
    - x1 (left), y1 (top), x2 (right), y2 (bottom) with x1 < x2 and y1 < y2.
    - Keep bounding boxes tight around individual elements or distinct functional sections.
-4. LABELS: Use readable visible text for labels. For CLI commands, use the visible command text (e.g. "git status", "npm run build"). For errors, include the error label (e.g. "Error: Cannot find module"). For recognizable apps/icons, use the recognizable name.
+4. LABELS: Use readable visible text for labels. For media controls, use the visible control action or track/artist name (e.g. "Play/Pause", "Next track", "Track: Song Title"). For CLI commands, use the visible command text (e.g. "git status", "npm run build"). For errors, include the error label (e.g. "Error: Cannot find module"). For recognizable apps/icons, use the recognizable name.
 5. DESCRIPTIONS: Keep each element's "description" concise (under 15 words), capturing its visible content, role, or execution state (e.g. "Completed with exit code 0", "Active prompt waiting for user input", "Error stack trace").
 6. NO FABRICATION & NO DUPLICATES: Only detect genuinely visible elements. Do not duplicate elements for the same visual control. Do not return mouse cursor or crosshair.
 7. VALID JSON ONLY: Return strictly valid JSON following the schema below with no text outside the JSON.
@@ -1190,7 +1199,7 @@ export class OllamaVisionProvider implements VisionProvider {
     const cursorPrompt = `You are a UI visual grounding system.
 This image is a small crop from a computer screen centered on the current mouse position.
 The mouse cursor is located at normalized coordinate: [${cursorNormX}, ${cursorNormY}] (where [0,0] is top-left and [1000,1000] is bottom-right).
-A red crosshair in the image visually marks this exact position.
+A red reticle/crosshair marker in the image visually frames and marks this exact position.
 Treat the numerical coordinate [${cursorNormX}, ${cursorNormY}] as your primary grounding anchor.
 
 TASK:
@@ -1219,7 +1228,7 @@ CRITICAL RULES:
 3. The returned bounding box should surround or cover the element at the cursor position.
 4. Do NOT identify ordinary webpage text, chat messages, or document content as a browser_tab. Only use browser_tab if the cursor is actually over a browser tab strip.
 5. If the cursor is over webpage text or conversation content, use text_block, message, card, or other as appropriate.
-6. Do NOT treat the red crosshair itself as a UI element.
+6. Do NOT treat the red reticle or crosshair marker itself as a UI element.
 7. Only return NO_ELEMENT if the cursor is genuinely over empty wallpaper, blank background, or empty margin.
 
 If no UI element is present:
@@ -1472,7 +1481,8 @@ Return ONLY valid JSON:
         `wall_time=${totalWallMs}ms`
       )
 
-      if (parsed.done_reason === 'length') {
+      const isTruncated = parsed.done_reason === 'length'
+      if (isTruncated) {
         console.warn(
           `[OllamaVisionProvider] Warning: Model output was truncated by token limit (done_reason=length). ` +
           `Generated tokens=${parsed.eval_count}. Salvaging partial element list...`
@@ -1496,11 +1506,8 @@ Return ONLY valid JSON:
       // If parsing failed entirely, return safe empty result
       if (!rawObj) {
         console.warn(
-          '[OllamaVisionProvider] Could not extract JSON from screen understanding response:',
-          JSON.stringify({
-            content: parsed.message?.content?.slice(0, 500),
-            done_reason: parsed.done_reason,
-          })
+          '[OllamaVisionProvider] Could not extract JSON from screen understanding response (done_reason=' +
+          parsed.done_reason + ')'
         )
         return {
           ok: true,
@@ -1511,6 +1518,7 @@ Return ONLY valid JSON:
             model: modelName,
             durationMs,
             totalTokens,
+            truncated: isTruncated,
           },
         }
       }
@@ -1523,7 +1531,8 @@ Return ONLY valid JSON:
         cursorY,
         modelName,
         durationMs,
-        totalTokens
+        totalTokens,
+        isTruncated
       )
 
       console.log(

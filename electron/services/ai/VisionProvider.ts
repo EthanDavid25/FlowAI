@@ -197,6 +197,8 @@ export interface ScreenUnderstandingResult {
   durationMs: number
   /** Total tokens used */
   totalTokens: number | null
+  /** True if the response was truncated by the model's token limit */
+  truncated?: boolean
 }
 
 /** Response envelope for screen understanding IPC handler — never rejects. */

@@ -162,12 +162,25 @@ interface ScreenUnderstandingResult {
   durationMs: number
   /** Total tokens used */
   totalTokens: number | null
+  /** True if the response was truncated by the model's token limit */
+  truncated?: boolean
 }
 
 /** IPC response envelope for screen understanding — never rejects */
 type ScreenUnderstandingResponse =
   | { ok: true; data: ScreenUnderstandingResult }
   | { ok: false; error: string }
+
+// ─── Vision Provider Types ──────────────────────────────────────────────────
+type VisionProviderId = 'gemini' | 'ollama'
+
+interface VisionProviderStatus {
+  id: VisionProviderId
+  name: string
+  ready: boolean
+  message: string
+  model: string
+}
 
 // ─── Bridge interface ─────────────────────────────────────────────────────────
 
@@ -182,11 +195,11 @@ interface FlowAIBridge {
    */
   captureScreen: () => Promise<CaptureResponse>
   /**
-   * Send a captured screenshot (as a data URL) to the local AI provider (Foundation 3).
+   * Send a captured screenshot (as a data URL) to the active vision AI provider.
    * Returns free-text vision analysis.
    * Always resolves — errors are returned as { ok: false, error }.
    */
-  analyzeScreen: (dataUrl: string) => Promise<AnalysisResponse>
+  analyzeScreen: (dataUrl: string, prompt?: string, provider?: VisionProviderId) => Promise<AnalysisResponse>
   /**
    * Get current desktop mouse cursor coordinates { x, y } in screen space.
    */
@@ -200,6 +213,7 @@ interface FlowAIBridge {
     cursorY: number
     screenWidth: number
     screenHeight: number
+    provider?: VisionProviderId
   }) => Promise<CursorAnalysisResponse>
   /**
    * Foundation 4B-2: Structured multi-element screen understanding.
@@ -211,7 +225,20 @@ interface FlowAIBridge {
     screenHeight: number
     cursorX?: number
     cursorY?: number
+    provider?: VisionProviderId
   }) => Promise<ScreenUnderstandingResponse>
+  /**
+   * Get active vision provider and health/readiness statuses for all vision providers.
+   */
+  getVisionProvider: () => Promise<{ active: VisionProviderId; statuses: Record<VisionProviderId, VisionProviderStatus> }>
+  /**
+   * Switch active vision provider ('gemini' | 'ollama').
+   */
+  setVisionProvider: (provider: VisionProviderId) => Promise<{ ok: boolean; active?: VisionProviderId; error?: string }>
+  /**
+   * Query status of a specific vision provider or all vision providers.
+   */
+  getVisionStatus: (provider?: VisionProviderId) => Promise<VisionProviderStatus | Record<VisionProviderId, VisionProviderStatus>>
   /**
    * Foundation 4B-1: Subscribe to global keyboard shortcut trigger.
    */
@@ -220,10 +247,52 @@ interface FlowAIBridge {
    * Get registration status and active key combination for the cursor shortcut.
    */
   getCursorShortcutInfo: () => Promise<CursorShortcutInfo>
+  /**
+   * Stage 3: Send conversational chat messages to the active AI provider.
+   */
+  sendChatMessage: (messages: ChatMessage[], options?: ChatOptions) => Promise<ChatResponse>
+  /**
+   * Stage 3: Check whether an API key is configured for a specific provider.
+   */
+  hasApiKey: (provider: string) => Promise<boolean>
+  /**
+   * Stage 3: Securely save an API key for a specific provider in OS encrypted storage.
+   */
+  setApiKey: (provider: string, key: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * Stage 3: Delete a stored API key for a provider.
+   */
+  deleteApiKey: (provider: string) => Promise<{ ok: boolean; error?: string }>
   /** Generic IPC invoke for other channels (channel-whitelisted in preload). */
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   /** Subscribe to main-process push events. Returns unsubscribe fn. */
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void
+}
+
+type ChatRole = 'user' | 'assistant' | 'system'
+
+interface ChatMessage {
+  role: ChatRole
+  content: string
+  imageContext?: string
+}
+
+interface ChatResult {
+  content: string
+  model: string
+  provider: string
+  durationMs: number
+  totalTokens: number | null
+}
+
+type ChatResponse =
+  | { ok: true; data: ChatResult }
+  | { ok: false; error: string }
+
+interface ChatOptions {
+  model?: string
+  temperature?: number
+  maxOutputTokens?: number
 }
 
 interface CursorShortcutPayload {
@@ -242,3 +311,4 @@ interface CursorShortcutInfo {
 interface Window {
   flowAI: FlowAIBridge
 }
+

@@ -24,9 +24,9 @@ import { desktopCapturer, screen } from 'electron'
 export interface CaptureResult {
   /** PNG image as a base64 data URL safe for use in <img src="…"> */
   dataUrl: string
-  /** Display width in logical pixels */
+  /** Captured image width in physical pixels (matches the PNG dimensions) */
   width: number
-  /** Display height in logical pixels */
+  /** Captured image height in physical pixels (matches the PNG dimensions) */
   height: number
   /** Epoch ms when the capture was taken */
   timestamp: number
@@ -39,17 +39,26 @@ export type CaptureResponse =
 
 // ─── Capture dimensions ────────────────────────────────────────────────────────
 // desktopCapturer.getSources thumbnailSize controls the resolution of the
-// returned NativeImage. We request the primary display's native size so the
-// preview is full-resolution. Cap at 2560 wide to keep data URLs manageable.
-const MAX_CAPTURE_WIDTH = 2560
+// returned NativeImage. We request the primary display's *physical* pixel size
+// (display.size × display.scaleFactor) so the capture is not downsampled on
+// high-DPI displays (e.g. 1920×1080 physical at 125% Windows scaling instead of
+// the 1536×864 logical size). This gives the AI model a sharper, full-resolution
+// image to reason about.
+// Cap at 3840 wide to keep data URLs manageable even on 4K/HiDPI screens.
+const MAX_CAPTURE_WIDTH = 3840
 
 function getPrimaryDisplaySize(): { width: number; height: number } {
   const primary = screen.getPrimaryDisplay()
-  const { width, height } = primary.size
-  const scaledWidth = Math.min(width, MAX_CAPTURE_WIDTH)
+  const { width, height } = primary.size         // logical DIP dimensions
+  const scale = primary.scaleFactor ?? 1         // e.g. 1.25 at 125% Windows DPI setting
+  // Convert to physical pixels — this is what desktopCapturer needs for a
+  // full-resolution capture that exactly matches the hardware framebuffer.
+  const physicalWidth = Math.round(width * scale)
+  const physicalHeight = Math.round(height * scale)
+  const clampedWidth = Math.min(physicalWidth, MAX_CAPTURE_WIDTH)
   // Maintain aspect ratio if we had to clamp
-  const scaledHeight = Math.round(height * (scaledWidth / width))
-  return { width: scaledWidth, height: scaledHeight }
+  const clampedHeight = Math.round(physicalHeight * (clampedWidth / physicalWidth))
+  return { width: clampedWidth, height: clampedHeight }
 }
 
 // ─── Core capture function ────────────────────────────────────────────────────

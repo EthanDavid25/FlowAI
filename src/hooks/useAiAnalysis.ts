@@ -49,6 +49,7 @@ export interface UseAiAnalysisReturn {
     cursorY: number
     screenWidth: number
     screenHeight: number
+    provider?: VisionProviderId
   }) => Promise<CursorElementResult | null>
   /** Trigger structured screen understanding (Foundation 4B-2) */
   triggerScreenUnderstanding: (params: {
@@ -57,6 +58,7 @@ export interface UseAiAnalysisReturn {
     screenHeight: number
     cursorX?: number
     cursorY?: number
+    provider?: VisionProviderId
   }) => Promise<ScreenUnderstandingResult | null>
   /** Reset back to idle state */
   reset: () => void
@@ -110,6 +112,7 @@ export function useAiAnalysis(): UseAiAnalysisReturn {
       cursorY: number
       screenWidth: number
       screenHeight: number
+      provider?: VisionProviderId
     }): Promise<CursorElementResult | null> => {
       setAiState({
         status: 'analyzing',
@@ -154,6 +157,7 @@ export function useAiAnalysis(): UseAiAnalysisReturn {
       screenHeight: number
       cursorX?: number
       cursorY?: number
+      provider?: VisionProviderId
     }): Promise<ScreenUnderstandingResult | null> => {
       setAiState({
         status: 'analyzing',

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import VisionProviderSelector from '../VisionProviderSelector/VisionProviderSelector'
+import type { VisionProviderId, VisionProviderStatus } from '../../types/screenUnderstanding'
 import styles from './ActionBar.module.css'
 
 /** Scan / camera frame icon */
@@ -65,12 +67,17 @@ interface ActionBarProps {
   isAnalyzing: boolean
   /** Active operation mode */
   activeMode?: 'screen' | 'cursor' | null
+  /** Active vision provider */
+  activeVisionProvider?: VisionProviderId
+  /** Callback when vision provider changes */
+  onVisionProviderChange?: (provider: VisionProviderId, status?: VisionProviderStatus) => void
 }
 
 /**
  * ActionBar — contains FlowAI actions:
  *   - "Analyze Cursor": intelligent cursor awareness (Foundation 4A / 4B-1 Ctrl+Shift+F)
- *   - "Analyze Screen": full screen vision analysis (Foundation 3)
+ *   - "Analyze Screen": full screen vision analysis (Foundation 3 / 4B-2)
+ *   - "Vision Provider Selector": toggle between Gemini Vision and Ollama Vision
  */
 export default function ActionBar({
   onAnalyzeScreen,
@@ -78,11 +85,22 @@ export default function ActionBar({
   isCapturing,
   isAnalyzing,
   activeMode = null,
+  activeVisionProvider,
+  onVisionProviderChange,
 }: ActionBarProps) {
   const isBusy = isCapturing || isAnalyzing
 
   const [shortcutText, setShortcutText] = useState('Ctrl+Shift+F')
   const [shortcutRegistered, setShortcutRegistered] = useState(true)
+  const [selectedProvider, setSelectedProvider] = useState<VisionProviderId>(
+    activeVisionProvider ?? 'gemini'
+  )
+
+  useEffect(() => {
+    if (activeVisionProvider) {
+      setSelectedProvider(activeVisionProvider)
+    }
+  }, [activeVisionProvider])
 
   useEffect(() => {
     window.flowAI?.getCursorShortcutInfo?.().then((info) => {
@@ -93,6 +111,9 @@ export default function ActionBar({
     }).catch(() => {})
   }, [])
 
+  const currentProvider = activeVisionProvider ?? selectedProvider
+  const providerLabel = currentProvider === 'gemini' ? 'Gemini Vision (gemini-3.8-flash)' : 'local AI (qwen3-vl:2b)'
+
   let hintText = shortcutRegistered
     ? `Press ${shortcutText} anywhere on your screen to identify the element under your cursor.`
     : 'Click Analyze Cursor below to identify the element under your cursor.'
@@ -100,9 +121,9 @@ export default function ActionBar({
   if (isCapturing) {
     hintText = 'Capturing screen and cursor position…'
   } else if (isAnalyzing && activeMode === 'cursor') {
-    hintText = 'Identifying UI element at cursor coordinates with local AI (qwen3-vl:2b)…'
+    hintText = `Identifying UI element at cursor coordinates with ${providerLabel}…`
   } else if (isAnalyzing && activeMode === 'screen') {
-    hintText = 'Analyzing full screen with local AI (qwen3-vl:2b)…'
+    hintText = `Analyzing full screen with ${providerLabel}…`
   }
 
   // Determine button states
@@ -122,6 +143,15 @@ export default function ActionBar({
       </div>
 
       <div className={styles.right}>
+        {/* Switchable Vision Provider Selector */}
+        <VisionProviderSelector
+          disabled={isBusy}
+          onProviderChange={(prov, status) => {
+            setSelectedProvider(prov)
+            onVisionProviderChange?.(prov, status)
+          }}
+        />
+
         {/* Primary Action: Analyze Cursor (Foundation 4A & 4B-1) */}
         <button
           className={styles.cursorBtn}
@@ -141,7 +171,7 @@ export default function ActionBar({
           {!isCursorBusy && <span className={styles.kbd}>{shortcutText}</span>}
         </button>
 
-        {/* Secondary Action: Analyze Screen (Foundation 3) */}
+        {/* Secondary Action: Analyze Screen (Foundation 3 & 4B-2) */}
         <button
           className={styles.analyzeBtn}
           onClick={onAnalyzeScreen}

@@ -53,8 +53,20 @@ export interface ScreenUnderstandingResult {
   model: string
   durationMs: number
   totalTokens: number | null
+  truncated?: boolean
 }
 
 export type ScreenUnderstandingResponse =
   | { ok: true; data: ScreenUnderstandingResult }
   | { ok: false; error: string }
+
+export type VisionProviderId = 'gemini' | 'ollama'
+
+export interface VisionProviderStatus {
+  id: VisionProviderId
+  name: string
+  ready: boolean
+  message: string
+  model: string
+}
+
